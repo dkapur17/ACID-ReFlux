@@ -7,8 +7,13 @@ This module contains implementations of generative modeling methods:
 
 from .base import BaseMethod
 from .ddpm import DDPM
+from .schedulers import NoiseSchedule, LinearSchedule, CosineSchedule, get_schedule
 
 __all__ = [
     'BaseMethod',
     'DDPM',
+    'NoiseSchedule',
+    'LinearSchedule',
+    'CosineSchedule',
+    'get_schedule',
 ]

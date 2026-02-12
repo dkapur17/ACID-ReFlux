@@ -83,6 +83,20 @@ class BaseMethod(nn.Module, ABC):
     def eval_mode(self):
         """Set the model to evaluation mode."""
         self.model.eval()
+
+    def to(self, device: torch.device) -> 'BaseMethod':
+        """
+        Move the method to a device.
+        
+        Args:
+            device: Target device
+        
+        Returns:
+            self for chaining
+        """
+        super().to(device)
+        self.device = device
+        return self
     
     def to(self, device: torch.device) -> 'BaseMethod':
         """
