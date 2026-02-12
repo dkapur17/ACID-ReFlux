@@ -32,7 +32,8 @@ import torch
 from tqdm import tqdm
 
 from src.models import create_model_from_config
-from src.data import save_image
+from src.data import save_image, unnormalize
+import math
 from src.methods import DDPM
 from src.utils import EMA
 
@@ -41,33 +42,52 @@ def load_checkpoint(checkpoint_path: str, device: torch.device):
     """Load checkpoint and return model, config, and EMA."""
     checkpoint = torch.load(checkpoint_path, map_location=device)
     config = checkpoint['config']
-    
+
     # Create model
     model = create_model_from_config(config).to(device)
-    model.load_state_dict(checkpoint['model'])
-    
+
+    # Handle torch.compile() wrapper prefix
+    # If model was compiled during training, state_dict keys have '_orig_mod.' prefix
+    state_dict = checkpoint['model']
+    if any(key.startswith('_orig_mod.') for key in state_dict.keys()):
+        state_dict = {key.replace('_orig_mod.', ''): value
+                     for key, value in state_dict.items()}
+
+    model.load_state_dict(state_dict)
+
     # Create EMA and load
     ema = EMA(model, decay=config['training']['ema_decay'])
-    ema.load_state_dict(checkpoint['ema'])
-    
+
+    # Handle torch.compile() prefix in EMA state_dict too
+    ema_state_dict = checkpoint['ema']
+    if 'shadow' in ema_state_dict and any(key.startswith('_orig_mod.') for key in ema_state_dict['shadow'].keys()):
+        ema_state_dict['shadow'] = {key.replace('_orig_mod.', ''): value
+                                     for key, value in ema_state_dict['shadow'].items()}
+
+    ema.load_state_dict(ema_state_dict)
+
     return model, config, ema
 
 
 def save_samples(
     samples: torch.Tensor,
     save_path: str,
-    num_samples: int,
+    sample_idx: int,
 ) -> None:
     """
-    TODO: save generated samples as images.
+    Save generated samples as images.
 
     Args:
         samples: Generated samples tensor with shape (num_samples, C, H, W).
         save_path: File path to save the image grid.
         num_samples: Number of samples, used to calculate grid layout.
+        nrow: Number of images per row in the grid (default: 8).
     """
+    # Unnormalize from [-1, 1] to [0, 1]
+    samples = unnormalize(samples)
 
-    raise NotImplementedError
+    # Save image grid
+    save_image(samples[sample_idx], save_path)
 
 
 def main():
@@ -157,6 +177,7 @@ def main():
                 batch_size=batch_size,
                 image_shape=image_shape,
                 num_steps=num_steps,
+                show_progress=True
                 # TODO: add your arugments here
             )
 
@@ -166,7 +187,7 @@ def main():
             else:
                 for i in range(samples.shape[0]):
                     img_path = os.path.join(args.output_dir, f"{sample_idx:06d}.png")
-                    save_samples(samples, img_path, 1)
+                    save_samples(samples, img_path, i)
                     sample_idx += 1
 
             remaining -= batch_size

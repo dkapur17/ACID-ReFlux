@@ -29,7 +29,7 @@ import argparse
 import math
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 import yaml
 import torch
@@ -108,9 +108,14 @@ def cleanup_distributed(is_distributed: bool) -> None:
 
 
 def unwrap_model(model: nn.Module) -> nn.Module:
-    """Return the underlying module if wrapped by DDP."""
+    """Return the underlying module if wrapped by DDP or torch.compile."""
+    # Unwrap DDP first
     if isinstance(model, torch.nn.parallel.DistributedDataParallel):
-        return model.module
+        model = model.module
+    # Unwrap torch.compile
+    # torch.compile wraps the model in a CompiledAutograd wrapper
+    if hasattr(model, '_orig_mod'):
+        model = model._orig_mod
     return model
 
 
@@ -186,10 +191,25 @@ def load_checkpoint(
 ) -> int:
     """Load training checkpoint and return the step."""
     checkpoint = torch.load(path, map_location=device)
-    unwrap_model(model).load_state_dict(checkpoint['model'])
+
+    # Handle torch.compile() wrapper prefix
+    # If model was compiled during training, state_dict keys have '_orig_mod.' prefix
+    state_dict = checkpoint['model']
+    if any(key.startswith('_orig_mod.') for key in state_dict.keys()):
+        state_dict = {key.replace('_orig_mod.', ''): value
+                     for key, value in state_dict.items()}
+
+    unwrap_model(model).load_state_dict(state_dict)
     optimizer.load_state_dict(checkpoint['optimizer'])
+
     if ema is not None and 'ema' in checkpoint:
-        ema.load_state_dict(checkpoint['ema'])
+        # Handle torch.compile() prefix in EMA state_dict too
+        ema_state_dict = checkpoint['ema']
+        if 'shadow' in ema_state_dict and any(key.startswith('_orig_mod.') for key in ema_state_dict['shadow'].keys()):
+            ema_state_dict['shadow'] = {key.replace('_orig_mod.', ''): value
+                                         for key, value in ema_state_dict['shadow'].items()}
+        ema.load_state_dict(ema_state_dict)
+
     scaler.load_state_dict(checkpoint['scaler'])
     step = checkpoint['step']
     print(f"Loaded checkpoint from {path} at step {step}")
@@ -237,8 +257,16 @@ def generate_samples(
     if use_ema:
         ema.apply_shadow()
 
-    samples = None
-    # TODO: sample with your method.sample()
+    # Get sampling parameters from config
+    num_steps = config.get('sampling', {}).get('num_steps', None)
+
+    # Generate samples using the method's sample function
+    samples = method.sample(
+        batch_size=num_samples,
+        image_shape=image_shape,
+        num_steps=num_steps,
+        **sampling_kwargs
+    )
 
     if use_ema:
         ema.restore()
@@ -253,15 +281,21 @@ def save_samples(
     num_samples: int,
 ) -> None:
     """
-    TODO: save generated samples as images.
+    Save generated samples as images.
 
     Args:
         samples: Generated samples tensor with shape (num_samples, C, H, W).
         save_path: File path to save the image grid.
         num_samples: Number of samples, used to calculate grid layout.
     """
+    # Unnormalize from [-1, 1] to [0, 1]
+    samples = unnormalize(samples)
 
-    raise NotImplementedError
+    # Calculate grid dimensions (square-ish grid)
+    nrow = int(math.ceil(math.sqrt(num_samples)))
+
+    # Save image grid
+    save_image(samples, save_path, nrow=nrow, normalize=False)
 
 
 def train(
@@ -312,7 +346,8 @@ def train(
             dist.init_process_group(backend=backend, init_method='env://')
     else:
         use_cuda = torch.cuda.is_available() and config_device != 'cpu'
-        device = torch.device('cuda' if use_cuda else 'cpu')
+        use_mps = torch.mps.is_available() and config_device != 'cpu'
+        device = torch.device('cuda' if use_cuda else 'mps' if use_mps else 'cpu')
 
     if is_main_process:
         print("=" * 60)
@@ -374,6 +409,24 @@ def train(
     if is_main_process:
         print("Creating model...")
     base_model = create_model_from_config(config).to(device)
+
+    # Compile model if requested (speeds up training by 20-50%)
+    compile_model = config['infrastructure'].get('compile_model', False)
+    if compile_model:
+        if is_main_process:
+            print("Compiling model with torch.compile()...")
+            print("  (This may take 1-2 minutes on first run, but speeds up training)")
+
+        # Use reduce-overhead mode for best performance on stable models
+        # fullgraph=True ensures the entire model is compiled as one graph
+        base_model = torch.compile(
+            base_model,
+            mode='reduce-overhead',  # Optimize for repeated calls (training loop)
+            fullgraph=False,  # Allow graph breaks for flexibility
+        )
+
+        if is_main_process:
+            print("✓ Model compiled successfully")
 
     torch.manual_seed(seed + rank)
     if torch.cuda.is_available():
