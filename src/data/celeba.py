@@ -235,13 +235,23 @@ class CelebADataset(Dataset):
         """Build the preprocessing transforms."""
         transform_list = []
 
-        # TODO: write your image transforms & augmentation
+        # Data augmentation for training
+        if self.augment and self.split == "train":
+            # Horizontal flip is good for face images (preserves semantic content)
+            transform_list.append(transforms.RandomHorizontalFlip(p=0.5))
 
-        # Only resize if needed (dataset images are already 64x64)
+        # Only resize if the target image size is different from 64x64
+        if self.image_size != 64:
+            transform_list.append(transforms.Resize(self.image_size))
 
-        # For Data augmentation you can do something like
-        # if self.augment and self.split == "train":
-        #     transform_list.append(...)
+        # Convert PIL Image to tensor (values in [0, 1])
+        transform_list.append(transforms.ToTensor())
+
+        # Normalize to [-1, 1] range (standard for diffusion models)
+        # ToTensor() gives [0, 1], so we normalize: x * 2 - 1 = [-1, 1]
+        transform_list.append(transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]))
+
+            
 
         return transforms.Compose(transform_list)
 
