@@ -88,9 +88,9 @@ def save_samples(
     samples = unnormalize(samples)
 
     # Save image grid
-    if sample_idx:
+    if sample_idx is not None:
         save_image(samples[sample_idx], save_path, nrow=1)
-    if nrow:
+    elif nrow:
         save_image(samples, save_path, nrow=nrow)
     else:
         save_image(samples, save_path)
@@ -201,7 +201,7 @@ def main():
             else:
                 for i in range(samples.shape[0]):
                     img_path = os.path.join(args.output_dir, f"{sample_idx:06d}.png")
-                    save_samples(samples, img_path, i)
+                    save_samples(samples, img_path, sample_idx=i)
                     sample_idx += 1
 
             remaining -= batch_size

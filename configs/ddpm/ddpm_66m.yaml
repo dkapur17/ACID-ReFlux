@@ -1,0 +1,67 @@
+# DDPM Training Config — Small Model (~16M params)
+# Optimized for KID < 0.005 on CelebA 64x64
+
+data:
+  dataset: "celeba"
+  root: "/data/celeba"
+  from_hub: true
+  repo_name: "electronickale/cmu-10799-celeba64-subset"
+  image_size: 64
+  channels: 3
+  num_workers: 4
+  pin_memory: true
+  augment: true
+
+model:
+  base_channels: 128                # 128 → 64 (main size reduction lever)
+  channel_mult: [1, 2, 2, 4]      # same proportions — keeps rich bottleneck at 8x8
+  num_res_blocks: 2
+  attention_resolutions: [16, 8]   # attention at 16x16 and 8x8 is critical for face quality
+  num_heads: 4
+  dropout: 0.1
+  use_scale_shift_norm: true
+
+training:
+  batch_size: 128
+  learning_rate: 2.0e-4            # slightly higher — smaller models benefit from larger LR
+  weight_decay: 0.0
+  betas: [0.9, 0.999]
+  ema_decay: 0.9995                # slower EMA for tighter averaging — helps KID
+  ema_start: 2000
+  gradient_clip_norm: 1.0
+  num_iterations: 50000            # more iterations — smaller model trains faster per step
+  warmup_steps: 5000
+  min_lr_ratio: 0.1
+  log_every: 100
+  sample_every: 2000
+  save_every: 10000
+  num_samples: 16
+
+ddpm:
+  num_timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+  noise_schedule: "cosine"         # cosine > linear for quality (smoother noise schedule)
+  prediction_target: "epsilon"
+
+sampling:
+  num_steps: 1000
+  sampler: "ddpm"
+
+infrastructure:
+  seed: 42
+  device: "cuda"
+  num_gpus: 1
+  mixed_precision: true
+  compile_model: true
+
+checkpoint:
+  dir: "./checkpoints"
+  resume: null
+
+logging:
+  dir: "./logs"
+  wandb:
+    enabled: true
+    project: "cmu-10799"
+    entity: null

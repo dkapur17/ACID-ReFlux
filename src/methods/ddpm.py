@@ -266,7 +266,7 @@ class DDPM(BaseMethod):
             epsilon = (x_t - sqrt_alpha_bar * x_0_pred) / sqrt_one_minus_alpha_bar
         else:
             raise ValueError(f"Unknown prediction target: {self.prediction_target}")
-
+    
         x_0_pred = torch.clamp(x_0_pred, -1.0, 1.0)
 
         # Index into alphas_cumprod directly at t_prev (not the shifted "prev" buffer)
@@ -316,7 +316,7 @@ class DDPM(BaseMethod):
 
         # Generate the specific timesteps to visit
         if num_steps < self.num_timesteps:
-            timesteps = torch.linspace(self.num_timesteps - 1, 0, num_steps, device=device).long()
+            timesteps = torch.linspace(self.num_timesteps - 1, 0, num_steps, dtype=torch.long, device=device)
         else:
             timesteps = torch.arange(self.num_timesteps - 1, -1, -1, dtype=torch.long, device=device)
 
