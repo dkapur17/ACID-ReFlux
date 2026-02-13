@@ -2,11 +2,11 @@
 Denoising Diffusion Probabilistic Models (DDPM)
 """
 
-from typing import Dict, Tuple, Optional, Literal, List
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from typing import Any
 
 from .base import BaseMethod
 from .schedulers import get_schedule
@@ -62,12 +62,6 @@ class DDPM(BaseMethod):
         posterior_variance = betas * (1.0 - alphas_cumprod_prev) / (1.0 - alphas_cumprod)
         self.register_buffer("posterior_variance", posterior_variance)
 
-        # Log calculation for clipped posterior variance (for numerical stability)
-        self.register_buffer(
-            "posterior_log_variance_clipped",
-            torch.log(torch.clamp(posterior_variance, min=1e-20))
-        )
-
         # Coefficients for posterior mean
         self.register_buffer(
             "posterior_mean_coef1",
@@ -85,7 +79,7 @@ class DDPM(BaseMethod):
     # Helper functions
     # =========================================================================
 
-    def _extract(self, a: torch.Tensor, t: torch.Tensor, x_shape: Tuple[int, ...]) -> torch.Tensor:
+    def _extract(self, a: torch.Tensor, t: torch.Tensor, x_shape: tuple[int, ...]) -> torch.Tensor:
         """
         Extract values from a at indices t and reshape for broadcasting with x.
 
@@ -107,7 +101,7 @@ class DDPM(BaseMethod):
     # Forward process
     # =========================================================================
 
-    def forward_process(self, x_0: torch.Tensor, t: torch.Tensor, noise: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward_process(self, x_0: torch.Tensor, t: torch.Tensor, noise: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Implement the forward (noise adding) process of DDPM: q(x_t | x_0)
 
@@ -136,7 +130,7 @@ class DDPM(BaseMethod):
     # Training loss
     # =========================================================================
 
-    def compute_loss(self, x_0: torch.Tensor, **kwargs) -> Tuple[torch.Tensor, Dict[str, float]]:
+    def compute_loss(self, x_0: torch.Tensor, **kwargs) -> tuple[torch.Tensor, dict[str, float]]:
         """
         Implement DDPM loss function: simplified objective from Ho et al. 2020
 
@@ -251,67 +245,71 @@ class DDPM(BaseMethod):
     def sample(
         self,
         batch_size: int,
-        image_shape: Tuple[int, int, int],
-        num_steps: Optional[int] = None,
+        image_shape: tuple[int, int, int],
+        num_steps: int | None = None,
         return_trajectory: bool = False,
         show_progress: bool = False,
         **kwargs
     ) -> torch.Tensor:
         """
-        Implement DDPM sampling loop (Algorithm 2 from Ho et al. 2020)
-        Start from pure noise, iterate through all timesteps using reverse_process()
-
-        Args:
-            batch_size: Number of samples to generate
-            image_shape: Shape of each image (channels, height, width)
-            num_steps: Number of sampling steps (default: self.num_timesteps)
-            **kwargs: Additional method-specific arguments
-
-        Returns:
-            samples: Generated samples of shape (batch_size, *image_shape)
+        Implement DDPM sampling loop.
+        Supports num_steps < self.num_timesteps for future DDIM/Ablation support.
         """
-        self.eval_mode()
+        self.eval_mode() # Ensure model is in eval mode
+        device = self.device
 
         # Use all timesteps by default
         if num_steps is None:
             num_steps = self.num_timesteps
 
         # Start from pure noise (x_T ~ N(0, I))
-        x = torch.randn(batch_size, *image_shape, device=self.device)
+        x = torch.randn(batch_size, *image_shape, device=device)
 
-        # If using fewer steps than training, create a subset of timesteps
+        # Generate the specific timesteps to visit
         if num_steps < self.num_timesteps:
-            # Use evenly spaced timesteps
-            timesteps = torch.linspace(self.num_timesteps - 1, 0, num_steps, dtype=torch.long, device=self.device)
+            # Create a subset of timesteps (e.g., [999, 900, ... 0])
+            # We explicitly cast to long to avoid float indexing errors
+            timesteps = torch.linspace(self.num_timesteps - 1, 0, num_steps, device=device).long()
         else:
             # Use all timesteps in reverse order
-            timesteps = torch.arange(self.num_timesteps - 1, -1, -1, dtype=torch.long, device=self.device)
+            timesteps = torch.arange(self.num_timesteps - 1, -1, -1, dtype=torch.long, device=device)
 
         trajectory = []
-        # Iteratively denoise
-        pbar = enumerate(timesteps)
+        if return_trajectory:
+             trajectory.append(x.detach().cpu())
+
+        # Setup progress bar
+        # We iterate directly over the tensor to keep code clean
+        iterator = timesteps
         if show_progress:
-            pbar = __import__('tqdm').tqdm(pbar)
+            try:
+                from tqdm.auto import tqdm
+                iterator = tqdm(iterator, desc="Sampling", total=len(timesteps))
+            except ImportError:
+                pass # Fallback to silent loop if tqdm is missing
         
-        for i, t in pbar:
+        for t in iterator:
             # Create batch of timesteps
-            t_batch = torch.full((batch_size,), t, device=self.device, dtype=torch.long)
+            t_batch = torch.full((batch_size,), t, device=device, dtype=torch.long)
 
             # One step of reverse diffusion
             x = self.reverse_process(x, t_batch)
             
             if return_trajectory:
-                trajectory.append(torch.clamp(-1,))
+                # Clamp and append current sample to trajectory 
+                trajectory.append(torch.clamp(x, -1, 1).detach().cpu())
 
         if return_trajectory:
-            return x, trajectory
+            # Return tuple: (final_image, tensor_of_steps)
+            return x, torch.stack(trajectory)
+            
         return x
 
     # =========================================================================
     # Device / state
     # =========================================================================
 
-    def state_dict(self) -> Dict:
+    def state_dict(self) -> dict[str, Any]:
         state = super().state_dict()
         state["num_timesteps"] = self.num_timesteps
         state["beta_start"] = self.beta_start

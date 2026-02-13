@@ -15,7 +15,7 @@ import modal
 # =============================================================================
 
 # Create the Modal app
-app = modal.App("cmu-10799-diffusion")
+app = modal.App("cmu-10799")
 
 # Define the container image with all dependencies
 # This mirrors the CPU-only environment (environments/environment-cpu.yml)
@@ -40,7 +40,7 @@ image = (
 )
 
 # Create a persistent volume for checkpoints and data
-volume = modal.Volume.from_name("cmu-10799-diffusion-data", create_if_missing=True)
+volume = modal.Volume.from_name("cmu-10799-data", create_if_missing=True)
 
 # =============================================================================
 # Training Function
@@ -54,6 +54,7 @@ def _train_impl(
     batch_size: int = None,
     learning_rate: float = None,
     overfit_single_batch: bool = False,
+    run_name: str = None,
 ):
     """
     Internal training implementation.
@@ -75,6 +76,9 @@ def _train_impl(
     else:
         config_path = f"/root/{config_path}"
         config_tag = os.path.splitext(os.path.basename(config_path))[0]
+
+    if run_name:
+        config_tag = run_name
 
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
@@ -146,36 +150,36 @@ def _train_impl(
 
 # Create training functions for different GPU counts
 @app.function(image=image, gpu="L40S:1", timeout=60*60*12, volumes={"/data": volume}, secrets=[modal.Secret.from_name("wandb-api-key")])
-def train_1gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False):
-    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch)
+def train_1gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False, run_name: str = None):
+    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch, run_name)
 
 @app.function(image=image, gpu="L40S:2", timeout=60*60*12, volumes={"/data": volume}, secrets=[modal.Secret.from_name("wandb-api-key")])
-def train_2gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False):
-    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch)
+def train_2gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False, run_name: str = None):
+    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch, run_name)
 
 @app.function(image=image, gpu="L40S:3", timeout=60*60*12, volumes={"/data": volume}, secrets=[modal.Secret.from_name("wandb-api-key")])
-def train_3gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False):
-    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch)
+def train_3gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False, run_name: str = None):
+    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch, run_name)
 
 @app.function(image=image, gpu="L40S:4", timeout=60*60*12, volumes={"/data": volume}, secrets=[modal.Secret.from_name("wandb-api-key")])
-def train_4gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False):
-    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch)
+def train_4gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False, run_name: str = None):
+    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch, run_name)
 
 @app.function(image=image, gpu="L40S:5", timeout=60*60*12, volumes={"/data": volume}, secrets=[modal.Secret.from_name("wandb-api-key")])
-def train_5gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False):
-    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch)
+def train_5gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False, run_name: str = None):
+    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch, run_name)
 
 @app.function(image=image, gpu="L40S:6", timeout=60*60*12, volumes={"/data": volume}, secrets=[modal.Secret.from_name("wandb-api-key")])
-def train_6gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False):
-    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch)
+def train_6gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False, run_name: str = None):
+    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch, run_name)
 
 @app.function(image=image, gpu="L40S:7", timeout=60*60*12, volumes={"/data": volume}, secrets=[modal.Secret.from_name("wandb-api-key")])
-def train_7gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False):
-    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch)
+def train_7gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False, run_name: str = None):
+    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch, run_name)
 
 @app.function(image=image, gpu="L40S:8", timeout=60*60*12, volumes={"/data": volume}, secrets=[modal.Secret.from_name("wandb-api-key")])
-def train_8gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False):
-    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch)
+def train_8gpu(method: str = "ddpm", config_path: str = None, resume_from: str = None, num_iterations: int = None, batch_size: int = None, learning_rate: float = None, overfit_single_batch: bool = False, run_name: str = None):
+    return _train_impl(method, config_path, resume_from, num_iterations, batch_size, learning_rate, overfit_single_batch, run_name)
 
 # Map GPU counts to functions
 TRAIN_FUNCTIONS = {
@@ -451,6 +455,40 @@ def evaluate_torch_fidelity(
 
 
 # =============================================================================
+# Storage Utilities
+# =============================================================================
+
+@app.function(
+    image=image,
+    timeout=60 * 30,
+    volumes={"/data": volume},
+)
+def delete_dir(path: str):
+    """
+    Delete a directory from the Modal volume.
+
+    Args:
+        path: Path relative to /data (e.g. 'checkpoints/ddpm_20250101_120000')
+    """
+    import os
+    import shutil
+
+    full_path = f"/data/{path}"
+
+    if not os.path.exists(full_path):
+        return f"Path does not exist: {path}"
+
+    if os.path.isfile(full_path):
+        os.remove(full_path)
+        volume.commit()
+        return f"Deleted file: {path}"
+
+    shutil.rmtree(full_path)
+    volume.commit()
+    return f"Deleted directory: {path}"
+
+
+# =============================================================================
 # CLI Entry Points
 # =============================================================================
 
@@ -468,6 +506,8 @@ def main(
     metrics: str = None,
     overfit_single_batch: bool = False,
     override: bool = False,
+    run_name: str = None,
+    path: str = None,
 ):
     """
     Main entry point for Modal CLI.
@@ -508,6 +548,7 @@ def main(
             batch_size=batch_size,
             learning_rate=learning_rate,
             overfit_single_batch=overfit_single_batch,
+            run_name=run_name,
         )
         print(result)
     elif action == "sample":
@@ -540,6 +581,13 @@ def main(
 
         result = evaluate_torch_fidelity.remote(**eval_kwargs)
         print(result)
+    elif action == "delete":
+        if path is None:
+            print("Error: --path is required for delete action")
+            print("Example: modal run modal_app.py --action delete --path checkpoints/ddpm_20250101_120000")
+            return
+        result = delete_dir.remote(path=path)
+        print(result)
     else:
         print(f"Unknown action: {action}")
-        print("Valid actions: download, train, sample, evaluate")
+        print("Valid actions: download, train, sample, evaluate, delete")

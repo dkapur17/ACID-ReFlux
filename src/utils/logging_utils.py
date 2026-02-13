@@ -7,13 +7,12 @@ Provides unified logging setup for training, sampling, and evaluation.
 import os
 import sys
 import logging
-from typing import Optional
 
 
 def setup_logger(
     log_dir: str,
     name: str = 'main',
-    log_file: Optional[str] = None,
+    log_file: str | None = None,
     level: int = logging.INFO,
 ) -> logging.Logger:
     """

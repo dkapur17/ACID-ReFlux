@@ -7,10 +7,11 @@ implementations.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, Tuple
 
 import torch
 import torch.nn as nn
+
+from typing import Any
 
 
 class BaseMethod(nn.Module, ABC):
@@ -42,7 +43,7 @@ class BaseMethod(nn.Module, ABC):
         self, 
         x: torch.Tensor,
         **kwargs
-    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+    ) -> tuple[torch.Tensor, dict[str, float]]:
         """
         Compute the training loss for a batch of data.
         
@@ -60,7 +61,7 @@ class BaseMethod(nn.Module, ABC):
     def sample(
         self,
         batch_size: int,
-        image_shape: Tuple[int, int, int],
+        image_shape: tuple[int, int, int],
         **kwargs
     ) -> torch.Tensor:
         """
@@ -116,7 +117,7 @@ class BaseMethod(nn.Module, ABC):
         """Return model parameters for optimizer."""
         return self.model.parameters()
     
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         """
         Get the state dict for checkpointing.
         
@@ -127,7 +128,7 @@ class BaseMethod(nn.Module, ABC):
             'model': self.model.state_dict(),
         }
     
-    def load_state_dict(self, state_dict: Dict[str, Any]):
+    def load_state_dict(self, state_dict: dict[str, Any]):
         """
         Load a state dict from a checkpoint.
         

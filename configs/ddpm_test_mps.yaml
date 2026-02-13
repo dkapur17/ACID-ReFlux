@@ -64,5 +64,5 @@ logging:
   dir: "./logs"
   wandb:
     enabled: false  # Disable wandb for quick testing
-    project: "cmu-10799-diffusion"
+    project: "cmu-10799"
     entity: null

@@ -12,7 +12,7 @@ What you need to implement:
 """
 
 import os
-from typing import Optional, Tuple, Callable
+from typing import Callable
 
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -297,7 +297,7 @@ def create_dataloader(
     num_workers: int = 4,
     pin_memory: bool = True,
     augment: bool = True,
-    shuffle: Optional[bool] = None,
+    shuffle: bool | None = None,
     drop_last: bool = True,
     from_hub: bool = False,
     repo_name: str = "electronickale/cmu-10799-celeba64-subset",

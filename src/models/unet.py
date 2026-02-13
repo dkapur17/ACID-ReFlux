@@ -18,7 +18,6 @@ Architecture Overview:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Optional, Tuple
 
 from .blocks import (
     TimestepEmbedding,
@@ -68,9 +67,9 @@ class UNet(nn.Module):
         in_channels: int = 3,
         out_channels: int = 3,
         base_channels: int = 128,
-        channel_mult: Tuple[int, ...] = (1, 2, 2, 4),
+        channel_mult: tuple[int, ...] = (1, 2, 2, 4),
         num_res_blocks: int = 2,
-        attention_resolutions: List[int] = [16, 8],
+        attention_resolutions: list[int] = [16, 8],
         num_heads: int = 4,
         dropout: float = 0.1,
         use_scale_shift_norm: bool = True,

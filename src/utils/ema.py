@@ -12,7 +12,6 @@ Typical decay values: 0.9999 or 0.999
 """
 
 import copy
-from typing import Optional, Iterable
 
 import torch
 import torch.nn as nn
