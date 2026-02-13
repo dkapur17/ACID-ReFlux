@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import Any
+from typing import Any, Literal
 
 from .base import BaseMethod
 from .schedulers import get_schedule
@@ -199,16 +199,11 @@ class DDPM(BaseMethod):
         return c1 * x_0 + c2 * x_t
 
     @torch.no_grad()
-    def reverse_process(self, x_t: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
+    def reverse_process_ddpm(self, x_t: torch.Tensor, t: torch.Tensor, t_prev: torch.Tensor) -> torch.Tensor:
         """
-        Implement one step of the DDPM reverse process (Algorithm 2 from Ho et al. 2020)
-
-        Args:
-            x_t: Noisy samples at time t (batch_size, channels, height, width)
-            t: the timestep (batch_size,)
-
-        Returns:
-            x_prev: Noisy samples at time t-1 (batch_size, channels, height, width)
+        One step of the DDPM reverse process (Algorithm 2 from Ho et al. 2020).
+        Transitions from t -> t_prev using the posterior q(x_{t_prev} | x_t, x_0).
+        Supports arbitrary strides (not just t -> t-1).
         """
 
         # Get model prediction
@@ -216,10 +211,8 @@ class DDPM(BaseMethod):
 
         # Derive x_0 prediction based on what the model predicts
         if self.prediction_target == "epsilon":
-            # Model predicts noise, derive x_0 from it
             x_0_pred = self._predict_x0(x_t, t, model_output)
         elif self.prediction_target == "x0":
-            # Model directly predicts x_0
             x_0_pred = model_output
         else:
             raise ValueError(f"Unknown prediction target: {self.prediction_target}")
@@ -227,9 +220,20 @@ class DDPM(BaseMethod):
         # Clamp x_0 prediction to valid range
         x_0_pred = torch.clamp(x_0_pred, -1.0, 1.0)
 
-        # Compute posterior mean using predicted x_0
-        posterior_mean = self._posterior_mean(x_0_pred, x_t, t)
-        posterior_var = self._extract(self.posterior_variance, t, x_t.shape)
+        # Compute posterior coefficients on the fly for arbitrary t -> t_prev
+        alpha_bar_t = self._extract(self.alphas_cumprod, t, x_t.shape)
+        alpha_bar_prev = self._extract(self.alphas_cumprod, t_prev, x_t.shape)
+
+        # Effective beta for the t -> t_prev transition
+        beta_tilde = 1.0 - alpha_bar_t / alpha_bar_prev
+
+        # Posterior variance: (1 - α̅_{t_prev}) / (1 - α̅_t) * β̃
+        posterior_var = (1.0 - alpha_bar_prev) / (1.0 - alpha_bar_t) * beta_tilde
+
+        # Posterior mean: coef1 * x̂_0 + coef2 * x_t
+        coef1 = torch.sqrt(alpha_bar_prev) * beta_tilde / (1.0 - alpha_bar_t)
+        coef2 = torch.sqrt(alpha_bar_t / alpha_bar_prev) * (1.0 - alpha_bar_prev) / (1.0 - alpha_bar_t)
+        posterior_mean = coef1 * x_0_pred + coef2 * x_t
 
         # Sample noise for stochastic sampling
         noise = torch.randn_like(x_t)
@@ -237,9 +241,53 @@ class DDPM(BaseMethod):
         # Don't add noise at t=0 (final step)
         nonzero_mask = (t != 0).float().view(-1, *([1] * (len(x_t.shape) - 1)))
 
-        # Compute x_{t-1}
+        # Compute x_{t_prev}
         x_prev = posterior_mean + nonzero_mask * torch.sqrt(posterior_var) * noise
         return x_prev
+
+    @torch.no_grad()
+    def reverse_process_ddim(self, x_t: torch.Tensor, t: torch.Tensor, t_prev: torch.Tensor) -> torch.Tensor:
+        """
+        One step of the DDIM reverse process (Song et al. 2020, eta=0).
+        Transitions from t -> t_prev deterministically, where t_prev can be
+        any timestep < t (not just t-1), enabling accelerated sampling.
+        """
+
+        model_output = self.model(x_t, t)
+
+        # Get both epsilon and x_0 predictions regardless of prediction target
+        if self.prediction_target == "epsilon":
+            epsilon = model_output
+            x_0_pred = self._predict_x0(x_t, t, epsilon)
+        elif self.prediction_target == "x0":
+            x_0_pred = model_output
+            sqrt_alpha_bar = self._extract(self.sqrt_alphas_cumprod, t, x_t.shape)
+            sqrt_one_minus_alpha_bar = self._extract(self.sqrt_one_minus_alphas_cumprod, t, x_t.shape)
+            epsilon = (x_t - sqrt_alpha_bar * x_0_pred) / sqrt_one_minus_alpha_bar
+        else:
+            raise ValueError(f"Unknown prediction target: {self.prediction_target}")
+
+        x_0_pred = torch.clamp(x_0_pred, -1.0, 1.0)
+
+        # Index into alphas_cumprod directly at t_prev (not the shifted "prev" buffer)
+        # This correctly handles arbitrary step sizes, not just t -> t-1
+        sqrt_alpha_bar_prev = self._extract(self.sqrt_alphas_cumprod, t_prev, x_0_pred.shape)
+        sqrt_one_minus_alpha_bar_prev = self._extract(self.sqrt_one_minus_alphas_cumprod, t_prev, x_0_pred.shape)
+
+        # DDIM deterministic update: x_{t_prev} = sqrt(α̅_{t_prev}) * x̂_0 + sqrt(1 - α̅_{t_prev}) * ε
+        return sqrt_alpha_bar_prev * x_0_pred + sqrt_one_minus_alpha_bar_prev * epsilon
+
+    @torch.no_grad()
+    def reverse_process(
+        self, x_t: torch.Tensor, t: torch.Tensor, t_prev: torch.Tensor,
+        sampler: Literal["ddpm", "ddim"] = "ddpm",
+    ) -> torch.Tensor:
+        if sampler == "ddpm":
+            return self.reverse_process_ddpm(x_t, t, t_prev)
+        elif sampler == "ddim":
+            return self.reverse_process_ddim(x_t, t, t_prev)
+        else:
+            raise ValueError(f"Unknown sampler '{sampler}'. Use 'ddpm' or 'ddim'.")
 
     @torch.no_grad()
     def sample(
@@ -249,13 +297,14 @@ class DDPM(BaseMethod):
         num_steps: int | None = None,
         return_trajectory: bool = False,
         show_progress: bool = False,
+        sampler: Literal["ddpm", "ddim"] = "ddpm",
         **kwargs
     ) -> torch.Tensor:
         """
-        Implement DDPM sampling loop.
-        Supports num_steps < self.num_timesteps for future DDIM/Ablation support.
+        Sampling loop supporting both DDPM and DDIM samplers.
+        For DDIM, num_steps < num_timesteps enables accelerated sampling.
         """
-        self.eval_mode() # Ensure model is in eval mode
+        self.eval_mode()
         device = self.device
 
         # Use all timesteps by default
@@ -267,40 +316,36 @@ class DDPM(BaseMethod):
 
         # Generate the specific timesteps to visit
         if num_steps < self.num_timesteps:
-            # Create a subset of timesteps (e.g., [999, 900, ... 0])
-            # We explicitly cast to long to avoid float indexing errors
             timesteps = torch.linspace(self.num_timesteps - 1, 0, num_steps, device=device).long()
         else:
-            # Use all timesteps in reverse order
             timesteps = torch.arange(self.num_timesteps - 1, -1, -1, dtype=torch.long, device=device)
+
+        # For each timestep, compute the "previous" timestep it transitions to
+        timesteps_prev = torch.cat([timesteps[1:], torch.tensor([0], dtype=torch.long, device=device)])
 
         trajectory = []
         if return_trajectory:
              trajectory.append(x.detach().cpu())
 
         # Setup progress bar
-        # We iterate directly over the tensor to keep code clean
-        iterator = timesteps
+        iterator = zip(timesteps, timesteps_prev)
         if show_progress:
             try:
                 from tqdm.auto import tqdm
                 iterator = tqdm(iterator, desc="Sampling", total=len(timesteps))
             except ImportError:
-                pass # Fallback to silent loop if tqdm is missing
-        
-        for t in iterator:
-            # Create batch of timesteps
-            t_batch = torch.full((batch_size,), t, device=device, dtype=torch.long)
+                pass
 
-            # One step of reverse diffusion
-            x = self.reverse_process(x, t_batch)
+        for t, t_prev in iterator:
+            t_batch = torch.full((batch_size,), t, device=device, dtype=torch.long)
+            t_batch_prev = torch.full((batch_size,), t_prev, device=device, dtype=torch.long)
+
+            x = self.reverse_process(x, t_batch, t_batch_prev, sampler)
             
             if return_trajectory:
-                # Clamp and append current sample to trajectory 
                 trajectory.append(torch.clamp(x, -1, 1).detach().cpu())
 
         if return_trajectory:
-            # Return tuple: (final_image, tensor_of_steps)
             return x, torch.stack(trajectory)
             
         return x
