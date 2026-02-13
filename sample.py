@@ -121,6 +121,9 @@ def main():
     parser.add_argument('--sampler', type=str, default='ddpm',
                        choices=['ddpm', 'ddim'],
                        help='Sampler to use for DDPM (default: ddpm). Ignored for cfm.')
+    parser.add_argument('--solver', type=str, default=None,
+                       choices=['euler', 'heun', 'rk2', 'rk4'],
+                       help='ODE solver for CFM (default: from config). Ignored for ddpm.')
     
     # Other options
     parser.add_argument('--no_ema', action='store_true',
@@ -148,7 +151,7 @@ def main():
     if args.method == 'ddpm':
         method = DDPM.from_config(model, config, device)
     elif args.method == 'cfm':
-        method = FlowMatching.from_config(model, config, device)
+        method = FlowMatching.from_config(model, config, device, solver_override=args.solver)
     else:
         raise ValueError(f"Unknown method: {args.method}. Supported: 'ddpm', 'cfm'.")
     

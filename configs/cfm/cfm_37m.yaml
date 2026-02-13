@@ -39,6 +39,7 @@ training:
 
 cfm:
   num_timesteps: 100
+  solver: "euler"  # euler, heun, rk2, rk4
 
 sampling:
   num_steps: 100

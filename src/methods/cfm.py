@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .base import BaseMethod
+from .solvers import Solver, EulerSolver, get_solver
 
 class FlowMatching(BaseMethod):
 
@@ -11,10 +12,12 @@ class FlowMatching(BaseMethod):
             model: nn.Module,
             device: torch.device,
             num_timesteps: int,
+            solver: Solver | None = None,
     ):
         super().__init__(model, device)
 
         self.num_timesteps = num_timesteps
+        self.solver = solver or EulerSolver()
         self.register_buffer(
             'timesteps',
             torch.linspace(0., 1., self.num_timesteps, device=device)
@@ -49,8 +52,7 @@ class FlowMatching(BaseMethod):
     
     @torch.no_grad()
     def reverse_process(self, x_t: torch.Tensor, t: torch.Tensor, t_next: torch.Tensor) -> torch.Tensor:
-        dt = (t_next - t).view(-1, *([1] * (x_t.dim() - 1)))
-        return x_t + self.model(x_t, t) * dt
+        return self.solver.step(self.model, x_t, t, t_next)
         
     @torch.no_grad()
     def sample(
@@ -111,11 +113,13 @@ class FlowMatching(BaseMethod):
         return state
     
     @classmethod
-    def from_config(cls, model: nn.Module, config: dict, device: torch.device) -> "FlowMatching":
+    def from_config(cls, model: nn.Module, config: dict, device: torch.device, solver_override: str | None = None) -> "FlowMatching":
 
         flow_matching_config = config.get("cfm", config)
+        solver_name = solver_override or flow_matching_config.get("solver", "euler")
         return FlowMatching(
             model=model,
             device=device,
-            num_timesteps=flow_matching_config['num_timesteps']
+            num_timesteps=flow_matching_config['num_timesteps'],
+            solver=get_solver(solver_name),
         )

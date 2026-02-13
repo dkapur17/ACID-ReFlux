@@ -9,6 +9,7 @@ from .base import BaseMethod
 from .ddpm import DDPM
 from .cfm import FlowMatching
 from .schedulers import NoiseSchedule, LinearSchedule, CosineSchedule, get_schedule
+from .solvers import Solver, EulerSolver, HeunSolver, RK2Solver, RK4Solver, get_solver
 
 __all__ = [
     'BaseMethod',
@@ -18,4 +19,10 @@ __all__ = [
     'LinearSchedule',
     'CosineSchedule',
     'get_schedule',
+    'Solver',
+    'EulerSolver',
+    'HeunSolver',
+    'RK2Solver',
+    'RK4Solver',
+    'get_solver',
 ]
