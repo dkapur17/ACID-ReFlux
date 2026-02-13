@@ -17,23 +17,25 @@ class NoiseSchedule(ABC):
 
 
 class LinearSchedule(NoiseSchedule):
-    def __init__(self, beta_start: float, beta_end: float):
+    def __init__(self, beta_start: float, beta_end: float, device: torch.device = torch.device("cpu")):
         self.beta_start = beta_start
         self.beta_end = beta_end
+        self.device = device
 
     def __call__(self, num_timesteps: int) -> torch.Tensor:
-        return torch.linspace(self.beta_start, self.beta_end, num_timesteps, dtype=torch.float32)
+        return torch.linspace(self.beta_start, self.beta_end, num_timesteps, dtype=torch.float32, device=self.device)
 
 
 class CosineSchedule(NoiseSchedule):
     """Cosine schedule from Nichol & Dhariwal 2021."""
 
-    def __init__(self, s: float = 0.008):
+    def __init__(self, s: float = 0.008, device: torch.device = torch.device("cpu")):
         self.s = s
+        self.device = device
 
     def __call__(self, num_timesteps: int) -> torch.Tensor:
         steps = num_timesteps + 1
-        t = torch.linspace(0, num_timesteps, steps, dtype=torch.float32)
+        t = torch.linspace(0, num_timesteps, steps, dtype=torch.float32, device=self.device)
         alphas_cumprod = torch.cos(((t / num_timesteps) + self.s) / (1 + self.s) * math.pi * 0.5) ** 2
         alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
         betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
@@ -46,7 +48,7 @@ SCHEDULES = {
 }
 
 
-def get_schedule(name: str, **kwargs) -> NoiseSchedule:
+def get_schedule(name: str, device: torch.device, **kwargs) -> NoiseSchedule:
     """Look up a noise schedule by name.
 
     For ``"linear"`` pass ``beta_start`` and ``beta_end``.
@@ -54,4 +56,4 @@ def get_schedule(name: str, **kwargs) -> NoiseSchedule:
     """
     if name not in SCHEDULES:
         raise ValueError(f"Unknown noise schedule: {name}. Choose from {list(SCHEDULES.keys())}.")
-    return SCHEDULES[name](**kwargs)
+    return SCHEDULES[name](device=device, **kwargs)

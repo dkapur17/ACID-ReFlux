@@ -1,0 +1,68 @@
+# Small test configuration for MPS (Apple Silicon) testing
+# This config uses a tiny model and few iterations to quickly test if training works
+
+data:
+  dataset: "celeba"
+  root: "./data/celeba-subset"
+  from_hub: false  # Set to true if you want to download from HuggingFace
+  repo_name: "electronickale/cmu-10799-celeba64-subset"
+  image_size: 64
+  channels: 3
+  num_workers: 2  # Reduce for faster startup on MPS
+  pin_memory: false  # MPS doesn't support pinned memory
+  augment: true
+
+# Small model architecture for quick testing
+model:
+  base_channels: 64  # Small base channels for fast training
+  channel_mult: [1, 2, 2]  # Fewer levels than full model
+  num_res_blocks: 1  # Minimal res blocks per level
+  attention_resolutions: [16]  # Attention only at lowest resolution
+  num_heads: 4
+  dropout: 0.0  # No dropout for faster training
+  use_scale_shift_norm: true
+
+# Training hyperparameters - minimal for testing
+training:
+  batch_size: 8  # Small batch size for MPS
+  learning_rate: 2.0e-4
+  weight_decay: 0.0
+  betas: [0.9, 0.999]
+  ema_decay: 0.9999
+  ema_start: 100  # Start using EMA after 100 iterations
+  gradient_clip_norm: 1.0
+  num_iterations: 500  # Just 500 iterations to test
+  log_every: 50
+  sample_every: 200
+  save_every: 500
+  num_samples: 4  # Just 4 samples for quick testing
+
+# DDPM algorithm hyperparameters
+ddpm:
+  num_timesteps: 1000
+  beta_start: 0.0001
+  beta_end: 0.02
+  noise_schedule: "cosine"  # Can also try "cosine"
+  prediction_target: "epsilon"  # "epsilon" or "x0" - what the model predicts
+
+sampling:
+  num_steps: 1000  # Use all timesteps for sampling
+  sampler: "ddpm"
+
+infrastructure:
+  seed: 42
+  device: "mps"  # Use MPS for Apple Silicon
+  num_gpus: 1
+  mixed_precision: false  # MPS doesn't support AMP as well as CUDA
+  compile_model: false
+
+checkpoint:
+  dir: "./checkpoints"
+  resume: null
+
+logging:
+  dir: "./logs"
+  wandb:
+    enabled: false  # Disable wandb for quick testing
+    project: "cmu-10799-diffusion"
+    entity: null

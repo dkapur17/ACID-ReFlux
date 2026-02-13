@@ -37,7 +37,7 @@ class DDPM(BaseMethod):
 
         # Create beta schedule based on the specified type
         schedule_kwargs = {"beta_start": beta_start, "beta_end": beta_end} if noise_schedule == "linear" else {}
-        betas = get_schedule(noise_schedule, **schedule_kwargs)(num_timesteps)
+        betas = get_schedule(noise_schedule, device=device, **schedule_kwargs)(num_timesteps)
 
         # Precompute useful values for diffusion process
         alphas = 1.0 - betas
@@ -97,6 +97,7 @@ class DDPM(BaseMethod):
         Returns:
             Extracted values with shape compatible for broadcasting
         """
+
         batch_size = t.shape[0]
         out = a.gather(-1, t)
         # Reshape to (batch_size, 1, 1, 1) for broadcasting with images
@@ -149,6 +150,7 @@ class DDPM(BaseMethod):
         """
         batch_size = x_0.shape[0]
         device = x_0.device
+
 
         # Sample random timesteps for each image in the batch
         t = torch.randint(0, self.num_timesteps, (batch_size,), device=device, dtype=torch.long)
@@ -308,11 +310,6 @@ class DDPM(BaseMethod):
     # =========================================================================
     # Device / state
     # =========================================================================
-
-    def to(self, device: torch.device) -> "DDPM":
-        super().to(device)
-        self.device = device
-        return self
 
     def state_dict(self) -> Dict:
         state = super().state_dict()

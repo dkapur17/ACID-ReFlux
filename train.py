@@ -363,6 +363,9 @@ def train(
                 gpu_name = torch.cuda.get_device_name(device)
                 print(f"✓ Single GPU training")
                 print(f"  - Device: {device} ({gpu_name})")
+            elif device.type == 'mps':
+                print(f"✓ Apple Silicon training")
+                print(f"  - Device: {device}")
             else:
                 print(f"✓ CPU training")
                 print(f"  - Device: {device}")
@@ -375,6 +378,8 @@ def train(
     torch.manual_seed(seed)  # Same seed for all ranks for model init
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
+    if torch.backends.mps.is_available():
+        torch.mps.manual_seed(seed)
 
     training_config = config['training']
     data_config = config['data']
