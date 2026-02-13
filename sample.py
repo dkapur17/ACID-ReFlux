@@ -34,7 +34,7 @@ from tqdm import tqdm
 from src.models import create_model_from_config
 from src.data import save_image, unnormalize
 import math
-from src.methods import DDPM
+from src.methods import DDPM, FlowMatching
 from src.utils import EMA
 
 
@@ -72,7 +72,8 @@ def load_checkpoint(checkpoint_path: str, device: torch.device):
 def save_samples(
     samples: torch.Tensor,
     save_path: str,
-    sample_idx: int,
+    sample_idx: int | None = None,
+    nrow: int | None = None,
 ) -> None:
     """
     Save generated samples as images.
@@ -87,15 +88,19 @@ def save_samples(
     samples = unnormalize(samples)
 
     # Save image grid
-    save_image(samples[sample_idx], save_path)
-
+    if sample_idx:
+        save_image(samples[sample_idx], save_path, nrow=1)
+    if nrow:
+        save_image(samples, save_path, nrow=nrow)
+    else:
+        save_image(samples, save_path)
 
 def main():
     parser = argparse.ArgumentParser(description='Generate samples from trained model')
     parser.add_argument('--checkpoint', type=str, required=True,
                        help='Path to model checkpoint')
     parser.add_argument('--method', type=str, required=True,
-                       choices=['ddpm'], # You can add more later
+                       choices=['ddpm', 'cfm'],
                        help='Method used for training (currently only ddpm is supported)')
     parser.add_argument('--num_samples', type=int, default=64,
                        help='Number of samples to generate')
@@ -113,6 +118,9 @@ def main():
     # Sampling arguments
     parser.add_argument('--num_steps', type=int, default=None,
                        help='Number of sampling steps (default: from config)')
+    parser.add_argument('--sampler', type=str, default='ddpm',
+                       choices=['ddpm', 'ddim'],
+                       help='Sampler to use for DDPM (default: ddpm). Ignored for cfm.')
     
     # Other options
     parser.add_argument('--no_ema', action='store_true',
@@ -139,8 +147,10 @@ def main():
     # Create method
     if args.method == 'ddpm':
         method = DDPM.from_config(model, config, device)
+    elif args.method == 'cfm':
+        method = FlowMatching.from_config(model, config, device)
     else:
-        raise ValueError(f"Unknown method: {args.method}. Only 'ddpm' is currently supported.")
+        raise ValueError(f"Unknown method: {args.method}. Supported: 'ddpm', 'cfm'.")
     
     # Apply EMA weights
     if not args.no_ema:
@@ -173,12 +183,16 @@ def main():
 
             num_steps = args.num_steps or config['sampling']['num_steps']
 
+            sampling_kwargs = {}
+            if args.method == 'ddpm':
+                sampling_kwargs['sampler'] = args.sampler
+
             samples = method.sample(
                 batch_size=batch_size,
                 image_shape=image_shape,
                 num_steps=num_steps,
-                show_progress=True
-                # TODO: add your arugments here
+                show_progress=True,
+                **sampling_kwargs,
             )
 
             # Save individual images immediately or collect for grid

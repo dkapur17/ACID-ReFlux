@@ -209,6 +209,7 @@ def sample(
     checkpoint: str = "checkpoints/ddpm/ddpm_final.pt",
     num_samples: int = None,
     num_steps: int = None,
+    sampler: str = None,
 ):
     """
     Generate samples from a trained model.
@@ -239,6 +240,8 @@ def sample(
         cmd.extend(["--num_samples", str(num_samples)])
     if num_steps is not None:
         cmd.extend(["--num_steps", str(num_steps)])
+    if sampler is not None:
+        cmd.extend(["--sampler", sampler])
 
     subprocess.run(cmd, check=True)
     volume.commit()
@@ -300,6 +303,7 @@ def evaluate_torch_fidelity(
     num_samples: int = 5000,
     batch_size: int = 128,
     num_steps: int = None,
+    sampler: str = None,
     override: bool = False,
 ):
     """
@@ -407,6 +411,8 @@ def evaluate_torch_fidelity(
 
         if num_steps:
             sample_cmd.extend(["--num_steps", str(num_steps)])
+        if sampler:
+            sample_cmd.extend(["--sampler", sampler])
 
         subprocess.run(sample_cmd, check=True)
         print(f"Generated {num_samples} samples to {generated_dir}")
@@ -507,6 +513,7 @@ def main(
     overfit_single_batch: bool = False,
     override: bool = False,
     run_name: str = None,
+    sampler: str = None,
     path: str = None,
 ):
     """
@@ -559,6 +566,7 @@ def main(
             checkpoint=checkpoint,
             num_samples=num_samples,
             num_steps=num_steps,
+            sampler=sampler,
         )
         print(result)
     elif action == "evaluate" or action == "evaluate_torch_fidelity":
@@ -578,6 +586,8 @@ def main(
             eval_kwargs['batch_size'] = batch_size
         if num_steps is not None:
             eval_kwargs['num_steps'] = num_steps
+        if sampler is not None:
+            eval_kwargs['sampler'] = sampler
 
         result = evaluate_torch_fidelity.remote(**eval_kwargs)
         print(result)
