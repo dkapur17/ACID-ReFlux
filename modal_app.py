@@ -195,6 +195,67 @@ TRAIN_FUNCTIONS = {
 
 
 # =============================================================================
+# ReFlow Function
+# =============================================================================
+
+def _reflow_impl(
+    config_path: str,
+    checkpoint: str,
+    run_name: str = None,
+):
+    """
+    Internal ReFlow implementation for Modal.
+
+    Loads config, overrides paths for Modal volume, and runs reflow.py.
+    """
+    import os
+    import sys
+    import yaml
+
+    sys.path.insert(0, "/root")
+
+    # Load config
+    config_path = f"/root/{config_path}"
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+
+    # Resolve checkpoint path on Modal volume
+    checkpoint_path = checkpoint
+    if not checkpoint_path.startswith('/data'):
+        checkpoint_path = f"/data/{checkpoint_path}"
+
+    # Set Modal-specific logging path
+    config_tag = run_name or os.path.splitext(os.path.basename(config_path))[0]
+    config['logging']['dir'] = f"/data/logs/{config_tag}"
+
+    if run_name:
+        config['logging']['run_name'] = run_name
+
+    # Enable datagen caching — pairs are stored next to the checkpoint on the persistent volume
+    config.setdefault('datagen', {})
+    config['datagen']['cache'] = True
+
+    os.makedirs(config['logging']['dir'], exist_ok=True)
+
+    from reflow import run_reflow
+    run_reflow(config, checkpoint=checkpoint_path)
+
+    volume.commit()
+    return f"ReFlow complete! Outputs saved to /data/logs/{config_tag}"
+
+
+@app.function(
+    image=image,
+    gpu="L40S",
+    timeout=60 * 60 * 24,  # 24 hours — ReFlow runs multiple iterations
+    volumes={"/data": volume},
+    secrets=[modal.Secret.from_name("wandb-api-key")],
+)
+def reflow_1gpu(config_path: str = None, checkpoint: str = None, run_name: str = None):
+    return _reflow_impl(config_path, checkpoint, run_name)
+
+
+# =============================================================================
 # Sampling Function
 # =============================================================================
 
@@ -210,6 +271,7 @@ def sample(
     num_samples: int = None,
     num_steps: int = None,
     sampler: str = None,
+    solver: str = None,
 ):
     """
     Generate samples from a trained model.
@@ -242,6 +304,8 @@ def sample(
         cmd.extend(["--num_steps", str(num_steps)])
     if sampler is not None:
         cmd.extend(["--sampler", sampler])
+    if solver is not None:
+        cmd.extend(["--solver", solver])
 
     subprocess.run(cmd, check=True)
     volume.commit()
@@ -305,6 +369,7 @@ def evaluate_torch_fidelity(
     num_steps: int = None,
     sampler: str = None,
     override: bool = False,
+    solver: str = None,
 ):
     """
     Evaluate using torch-fidelity CLI.
@@ -413,6 +478,8 @@ def evaluate_torch_fidelity(
             sample_cmd.extend(["--num_steps", str(num_steps)])
         if sampler:
             sample_cmd.extend(["--sampler", sampler])
+        if solver:
+            sample_cmd.extend(["--solver", solver])
 
         subprocess.run(sample_cmd, check=True)
         print(f"Generated {num_samples} samples to {generated_dir}")
@@ -514,6 +581,7 @@ def main(
     override: bool = False,
     run_name: str = None,
     sampler: str = None,
+    solver: str = None,
     path: str = None,
 ):
     """
@@ -567,6 +635,7 @@ def main(
             num_samples=num_samples,
             num_steps=num_steps,
             sampler=sampler,
+            solver=solver,
         )
         print(result)
     elif action == "evaluate" or action == "evaluate_torch_fidelity":
@@ -588,8 +657,21 @@ def main(
             eval_kwargs['num_steps'] = num_steps
         if sampler is not None:
             eval_kwargs['sampler'] = sampler
+        if solver is not None:
+            eval_kwargs['solver'] = solver
 
         result = evaluate_torch_fidelity.remote(**eval_kwargs)
+        print(result)
+    elif action == "reflow":
+        if config is None or checkpoint is None:
+            print("Error: --config and --checkpoint are required for reflow action")
+            print("Example: modal run modal_app.py --action reflow --config configs/reflow/reflow_16m.yaml --checkpoint checkpoints/cfm/cfm_final.pt")
+            return
+        result = reflow_1gpu.remote(
+            config_path=config,
+            checkpoint=checkpoint,
+            run_name=run_name,
+        )
         print(result)
     elif action == "delete":
         if path is None:
@@ -600,4 +682,4 @@ def main(
         print(result)
     else:
         print(f"Unknown action: {action}")
-        print("Valid actions: download, train, sample, evaluate, delete")
+        print("Valid actions: download, train, sample, evaluate, reflow, delete")

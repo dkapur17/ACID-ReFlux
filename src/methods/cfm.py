@@ -27,7 +27,7 @@ class FlowMatching(BaseMethod):
         t = t.view(x_0.shape[0], *([1] * (x_0.dim() - 1)))
         return x_1 * t + (1 - t) * x_0
 
-    def compute_loss(self, x_1: torch.Tensor) -> tuple[torch.Tensor, dict[str, float]]:
+    def compute_loss(self, x_1: torch.Tensor, x_0: torch.Tensor | None = None) -> tuple[torch.Tensor, dict[str, float]]:
 
         batch_size = x_1.shape[0]
         device = x_1.device
@@ -35,7 +35,8 @@ class FlowMatching(BaseMethod):
         t_idx = torch.randint(0, self.num_timesteps, (batch_size, ), device=device)
         t = self.timesteps[t_idx]
 
-        x_0 = torch.randn_like(x_1)
+        if x_0 is None:
+            x_0 = torch.randn_like(x_1)
 
         x_t = self.forward_process(x_0, x_1, t)
 
