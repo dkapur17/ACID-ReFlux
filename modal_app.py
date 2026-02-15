@@ -528,6 +528,54 @@ def evaluate_torch_fidelity(
 
 
 # =============================================================================
+# Curvature Evaluation Function
+# =============================================================================
+
+@app.function(
+    image=image,
+    gpu="L40S",
+    timeout=60 * 60 * 3,  # 3 hours
+    volumes={"/data": volume},
+)
+def evaluate_curvature(
+    checkpoint: str = "checkpoints/cfm/cfm_final.pt",
+    num_samples: int = 256,
+    batch_size: int = 128,
+    num_steps: int = 100,
+    solver: str = "rk4",
+):
+    """
+    Evaluate trajectory curvature of a flow matching / reflow model.
+
+    Args:
+        checkpoint: Path to checkpoint (relative to /data)
+        num_samples: Number of trajectories to evaluate
+        batch_size: Batch size for generation
+        num_steps: Number of ODE steps for trajectory
+        solver: ODE solver for integration (euler, heun, rk2, rk4)
+    """
+    import subprocess
+
+    checkpoint_path = f"/data/{checkpoint}"
+
+    cmd = [
+        "python", "/root/eval_curvature.py",
+        "--checkpoint", checkpoint_path,
+        "--num_samples", str(num_samples),
+        "--batch_size", str(batch_size),
+        "--num_steps", str(num_steps),
+        "--solver", solver,
+    ]
+
+    print(f"Running: {' '.join(cmd)}\n")
+    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
+    return result.stdout
+
+
+# =============================================================================
 # Storage Utilities
 # =============================================================================
 
@@ -673,6 +721,22 @@ def main(
             run_name=run_name,
         )
         print(result)
+    elif action == "evaluate_curvature":
+        if checkpoint is None:
+            checkpoint = f"checkpoints/{method}/{method}_final.pt"
+
+        eval_kwargs = {'checkpoint': checkpoint}
+        if num_samples is not None:
+            eval_kwargs['num_samples'] = num_samples
+        if batch_size is not None:
+            eval_kwargs['batch_size'] = batch_size
+        if num_steps is not None:
+            eval_kwargs['num_steps'] = num_steps
+        if solver is not None:
+            eval_kwargs['solver'] = solver
+
+        result = evaluate_curvature.remote(**eval_kwargs)
+        print(result)
     elif action == "delete":
         if path is None:
             print("Error: --path is required for delete action")
@@ -682,4 +746,4 @@ def main(
         print(result)
     else:
         print(f"Unknown action: {action}")
-        print("Valid actions: download, train, sample, evaluate, reflow, delete")
+        print("Valid actions: download, train, sample, evaluate, evaluate_curvature, reflow, delete")
