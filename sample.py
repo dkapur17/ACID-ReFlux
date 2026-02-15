@@ -108,6 +108,8 @@ def main():
                        help='Directory to save individual images (default: samples)')
     parser.add_argument('--grid', action='store_true',
                        help='Save as grid image instead of individual images')
+    parser.add_argument('--grid_rows', type=int, default=8,
+                        help='Number of rows in grid (default: 8)')
     parser.add_argument('--output', type=str, default=None,
                        help='Output path for grid (only used with --grid, default: samples_<timestamp>.png)')
     parser.add_argument('--batch_size', type=int, default=64,
@@ -221,7 +223,7 @@ def main():
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             args.output = f"samples_{timestamp}.png"
 
-        save_samples(all_samples, args.output, nrow=8)
+        save_samples(all_samples, args.output, nrow=args.grid_rows)
         print(f"Saved grid to {args.output}")
     else:
         print(f"Saved {args.num_samples} individual images to {args.output_dir}")

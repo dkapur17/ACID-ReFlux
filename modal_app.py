@@ -34,6 +34,7 @@ image = (
         "wandb>=0.15.0",
         "datasets>=2.0.0",  # For HuggingFace Hub dataset loading
         "torch-fidelity>=0.3.0",  # Comprehensive evaluation metrics
+        # "matplotlib>=3.4.0",  # Plotting
     )
     # Copy the local project directory into the image
     .add_local_dir(".", "/root", ignore=[".git", ".venv*", "venv", "__pycache__", "logs", "checkpoints", "*.md", "docs", "environments", "notebooks"])
@@ -272,6 +273,8 @@ def sample(
     num_steps: int = None,
     sampler: str = None,
     solver: str = None,
+    grid_rows: int = None,
+    output: str = None,
 ):
     """
     Generate samples from a trained model.
@@ -285,7 +288,7 @@ def sample(
     # Set up paths
     checkpoint_path = f"/data/{checkpoint}"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = f"/data/samples/{method}_{timestamp}.png"
+    output_path = f"/data/samples/{method}_{timestamp}.png" if output is None else f"/data/{output}"
 
     os.makedirs("/data/samples", exist_ok=True)
 
@@ -306,6 +309,10 @@ def sample(
         cmd.extend(["--sampler", sampler])
     if solver is not None:
         cmd.extend(["--solver", solver])
+    if grid_rows is not None:
+        cmd.extend(["--grid_rows", str(grid_rows)])
+    if output is not None:
+        cmd.extend(["--output", output_path])
 
     subprocess.run(cmd, check=True)
     volume.commit()
@@ -576,6 +583,63 @@ def evaluate_curvature(
 
 
 # =============================================================================
+# Trajectory Visualization Function
+# =============================================================================
+
+@app.function(
+    image=image,
+    gpu="L40S",
+    timeout=60 * 60 * 3,  # 3 hours
+    volumes={"/data": volume},
+)
+def visualize_trajectories(
+    checkpoint: str = "checkpoints/cfm/cfm_final.pt",
+    num_samples: int = 16,
+    num_steps: int = 100,
+    solver: str = "rk4",
+    projection: str = "pca",
+):
+    """
+    Visualize ODE trajectories projected to 2D.
+
+    Args:
+        checkpoint: Path to checkpoint (relative to /data)
+        num_samples: Number of trajectories to plot
+        num_steps: Number of ODE steps for trajectory
+        solver: ODE solver for integration
+        projection: Projection method (pca or umap)
+    """
+    import subprocess
+    import os
+
+    checkpoint_path = f"/data/{checkpoint}"
+
+    # Put output next to checkpoint
+    from pathlib import Path
+    output_dir = str(Path(checkpoint_path).parent)
+    output_path = os.path.join(output_dir, f"trajectories_{projection}.png")
+
+    cmd = [
+        "python", "/root/visualize_trajectories.py",
+        "--checkpoint", checkpoint_path,
+        "--num_samples", str(num_samples),
+        "--num_steps", str(num_steps),
+        "--solver", solver,
+        "--projection", projection,
+        "--output", output_path,
+    ]
+
+    print(f"Running: {' '.join(cmd)}\n")
+    result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
+
+    volume.commit()
+    return f"Trajectory plot saved to {output_path}"
+
+
+# =============================================================================
 # Storage Utilities
 # =============================================================================
 
@@ -630,6 +694,9 @@ def main(
     run_name: str = None,
     sampler: str = None,
     solver: str = None,
+    grid_rows: int = None,
+    output: str = None,
+    projection: str = None,
     path: str = None,
 ):
     """
@@ -684,6 +751,8 @@ def main(
             num_steps=num_steps,
             sampler=sampler,
             solver=solver,
+            grid_rows=grid_rows,
+            output=output,
         )
         print(result)
     elif action == "evaluate" or action == "evaluate_torch_fidelity":
@@ -737,6 +806,22 @@ def main(
 
         result = evaluate_curvature.remote(**eval_kwargs)
         print(result)
+    elif action == "visualize_trajectories":
+        if checkpoint is None:
+            checkpoint = f"checkpoints/{method}/{method}_final.pt"
+
+        viz_kwargs = {'checkpoint': checkpoint}
+        if num_samples is not None:
+            viz_kwargs['num_samples'] = num_samples
+        if num_steps is not None:
+            viz_kwargs['num_steps'] = num_steps
+        if solver is not None:
+            viz_kwargs['solver'] = solver
+        if projection is not None:
+            viz_kwargs['projection'] = projection
+
+        result = visualize_trajectories.remote(**viz_kwargs)
+        print(result)
     elif action == "delete":
         if path is None:
             print("Error: --path is required for delete action")
@@ -746,4 +831,4 @@ def main(
         print(result)
     else:
         print(f"Unknown action: {action}")
-        print("Valid actions: download, train, sample, evaluate, evaluate_curvature, reflow, delete")
+        print("Valid actions: download, train, sample, evaluate, evaluate_curvature, visualize_trajectories, reflow, delete")
