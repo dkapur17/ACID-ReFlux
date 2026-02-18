@@ -1,0 +1,66 @@
+# ReFlow Config — 16M param model
+# Starts from a pretrained CFM 1-RF checkpoint and runs rectified flow iterations.
+#
+# Usage:
+#   python reflow.py --config configs/reflow/reflow_16m.yaml --checkpoint path/to/1-RF.pt
+#
+# On Modal:
+#   modal run modal_app.py --action reflow --config configs/reflow/reflow_16m.yaml --checkpoint checkpoints/cfm/cfm_final.pt
+
+reflow:
+  num_iterations: 1  # number of RF iterations (1-RF -> 2-RF -> 3-RF)
+
+datagen:
+  num_pairs: 50000       # coupled pairs to generate per iteration
+  batch_size: 256        # large batch — no gradients needed
+  num_steps: 100         # ODE integration steps for pair generation
+  solver: "rk4"        # solver for pair generation
+  cache: true           # cache generated pairs to disk next to the checkpoint for reuse across runs
+
+training:
+  batch_size: 128
+  learning_rate: 1.0e-4  # lower LR for finetuning
+  weight_decay: 0.0
+  betas: [0.9, 0.999]
+  ema_decay: 0.9999
+  ema_start: 1000
+  gradient_clip_norm: 1.0
+  num_iterations: 30000  # training steps per RF iteration
+  log_every: 100
+  sample_every: 2000
+  save_every: 5000 
+  num_samples: 16
+
+sampling:
+  num_steps: 100         # steps for periodic sample visualization
+  solver: "euler"
+
+distillation:
+  enabled: false
+  training:
+    batch_size: 128
+    learning_rate: 5.0e-5
+    weight_decay: 0.0
+    betas: [0.9, 0.999]
+    ema_decay: 0.9999
+    ema_start: 1000
+    gradient_clip_norm: 1.0
+    num_iterations: 50000
+    log_every: 100
+    sample_every: 2000
+    save_every: 10000
+    num_samples: 16
+
+infrastructure:
+  seed: 42
+  device: "cuda"
+  mixed_precision: true
+  compile_model: true
+
+logging:
+  dir: "./logs"
+  run_name: null  # auto-generated if null
+  wandb:
+    enabled: true
+    project: "cmu-10799"
+    entity: null

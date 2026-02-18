@@ -27,13 +27,14 @@ class FlowMatching(BaseMethod):
         t = t.view(x_0.shape[0], *([1] * (x_0.dim() - 1)))
         return x_1 * t + (1 - t) * x_0
 
-    def compute_loss(self, x_1: torch.Tensor, x_0: torch.Tensor | None = None) -> tuple[torch.Tensor, dict[str, float]]:
+    def compute_loss(self, x_1: torch.Tensor, x_0: torch.Tensor | None = None, t: torch.Tensor | None = None) -> tuple[torch.Tensor, dict[str, float]]:
 
         batch_size = x_1.shape[0]
         device = x_1.device
 
-        t_idx = torch.randint(0, self.num_timesteps, (batch_size, ), device=device)
-        t = self.timesteps[t_idx]
+        if t is None:
+            t_idx = torch.randint(0, self.num_timesteps, (batch_size, ), device=device)
+            t = self.timesteps[t_idx]
 
         if x_0 is None:
             x_0 = torch.randn_like(x_1)
@@ -75,7 +76,7 @@ class FlowMatching(BaseMethod):
         x = torch.randn(batch_size, *image_shape, device=device)
 
         if num_steps < self.num_timesteps:
-            timesteps = torch.linspace(0, 1, num_steps, device=device)
+            timesteps = torch.linspace(0, 1, num_steps + 1, device=device)
         else:
             timesteps = self.timesteps
 
@@ -85,7 +86,7 @@ class FlowMatching(BaseMethod):
         if show_progress:
             try:
                 from tqdm.auto import tqdm
-                pbar = tqdm(pbar, total=num_steps-1)
+                pbar = tqdm(pbar, total=num_steps)
             except ImportError:
                 pass
 

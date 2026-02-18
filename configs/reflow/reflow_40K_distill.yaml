@@ -25,7 +25,7 @@ training:
   ema_decay: 0.9999
   ema_start: 1000
   gradient_clip_norm: 1.0
-  num_iterations: 30000  # training steps per RF iteration
+  num_iterations: 40000  # training steps per RF iteration
   log_every: 100
   sample_every: 2000
   save_every: 5000 
@@ -33,15 +33,10 @@ training:
 
 sampling:
   num_steps: 100         # steps for periodic sample visualization
-  solver: "rk4"
+  solver: "euler"
 
 distillation:
-  enabled: false
-  datagen:
-    num_pairs: 50000
-    batch_size: 256
-    num_steps: 100
-    solver: "rk4"
+  enabled: true
   training:
     batch_size: 128
     learning_rate: 5.0e-5
@@ -50,7 +45,7 @@ distillation:
     ema_decay: 0.9999
     ema_start: 1000
     gradient_clip_norm: 1.0
-    num_iterations: 50000
+    num_iterations: 20000
     log_every: 100
     sample_every: 2000
     save_every: 10000
@@ -60,6 +55,7 @@ infrastructure:
   seed: 42
   device: "cuda"
   mixed_precision: true
+  compile_model: true
 
 logging:
   dir: "./logs"

@@ -144,7 +144,7 @@ def generate_pairs(
         x_0 = torch.randn(bs, *image_shape, device=device)
 
         # Integrate ODE: x_0 -> x_1
-        timesteps = torch.linspace(0, 1, num_steps, device=device)
+        timesteps = torch.linspace(0, 1, num_steps + 1, device=device)
         x = x_0.clone()
 
         for t, t_next in zip(timesteps[:-1], timesteps[1:]):
@@ -236,13 +236,17 @@ def train_reflow_iteration(
     reflow_config: dict,
     x_0_all: torch.Tensor,
     x_1_all: torch.Tensor,
-    iteration: int,
     log_dir: str,
     device: torch.device,
+    iteration: int,
+    distill: bool = False,
     wandb_run=None,
 ) -> tuple[nn.Module, EMA]:
     """
     Run one ReFlow training iteration on coupled pairs.
+
+    When distill=True, always trains at t=0 so v_θ(x_0, 0) directly predicts
+    x_1 - x_0, enabling single-step generation. Otherwise samples t ~ Uniform[0,1].
 
     Args:
         model: The model to finetune.
@@ -250,9 +254,10 @@ def train_reflow_iteration(
         reflow_config: ReFlow config (for training hyperparams).
         x_0_all: Noise tensor (N, C, H, W) on CPU.
         x_1_all: Data tensor (N, C, H, W) on CPU.
-        iteration: Which RF iteration (2, 3, ...).
         log_dir: Directory for logs/samples/checkpoints.
         device: Device for training.
+        iteration: Which RF iteration (2, 3, ...). Used for naming in both reflow and distill modes.
+        distill: If True, fix t=0 for 1-step distillation training.
         wandb_run: Optional wandb run for logging.
 
     Returns:
@@ -260,6 +265,8 @@ def train_reflow_iteration(
     """
     training_config = reflow_config['training']
     data_config = source_config['data']
+
+    label = f"{iteration}-RF-distilled" if distill else f"{iteration}-RF"
 
     # Create dataloader from in-memory pairs
     dataset = TensorDataset(x_0_all, x_1_all)
@@ -311,14 +318,14 @@ def train_reflow_iteration(
     sampling_steps = reflow_config.get('sampling', {}).get('num_steps', 100)
 
     # Directories
-    iter_dir = os.path.join(log_dir, f"{iteration}-RF")
+    iter_dir = os.path.join(log_dir, label)
     samples_dir = os.path.join(iter_dir, 'samples')
     checkpoints_dir = os.path.join(iter_dir, 'checkpoints')
     os.makedirs(samples_dir, exist_ok=True)
     os.makedirs(checkpoints_dir, exist_ok=True)
 
     print(f"\n{'=' * 60}")
-    print(f"ReFlow Iteration {iteration}: Training {iteration}-RF")
+    print(f"Training {label} ({'1-step distillation, t=0 fixed' if distill else 'reflow'})")
     print(f"{'=' * 60}")
     print(f"  Pairs: {len(dataset)}")
     print(f"  Iterations: {num_iterations}")
@@ -334,7 +341,7 @@ def train_reflow_iteration(
     metrics_count = 0
     start_time = time.time()
 
-    pbar = tqdm(range(num_iterations), desc=f"{iteration}-RF Training")
+    pbar = tqdm(range(num_iterations), desc=f"{label} Training")
     for step in pbar:
         # Get batch (cycle through dataset)
         try:
@@ -349,8 +356,12 @@ def train_reflow_iteration(
         # Forward pass
         optimizer.zero_grad()
 
+        # Distillation fixes t=0 so the model learns to map x_0 -> x_1 in one step.
+        # Regular reflow samples t randomly.
+        t = torch.zeros(x_0_batch.shape[0], device=device) if distill else None
+
         with autocast(device_type, enabled=use_amp):
-            loss, metrics = method.compute_loss(x_1_batch, x_0=x_0_batch)
+            loss, metrics = method.compute_loss(x_1_batch, x_0=x_0_batch, t=t)
 
         # Backward pass
         scaler.scale(loss).backward()
@@ -386,10 +397,10 @@ def train_reflow_iteration(
 
             if wandb_run is not None:
                 log_dict = {
-                    f'{iteration}-RF/step': step + 1,
-                    f'{iteration}-RF/loss': avg_metrics['loss'],
-                    f'{iteration}-RF/steps_per_sec': steps_per_sec,
-                    f'{iteration}-RF/learning_rate': optimizer.param_groups[0]['lr'],
+                    f'{label}/step': step + 1,
+                    f'{label}/loss': avg_metrics['loss'],
+                    f'{label}/steps_per_sec': steps_per_sec,
+                    f'{label}/learning_rate': optimizer.param_groups[0]['lr'],
                 }
                 try:
                     wandb.log(log_dict)
@@ -414,21 +425,21 @@ def train_reflow_iteration(
                 try:
                     img = PILImage.open(sample_path)
                     wandb.log({
-                        f'{iteration}-RF/samples': wandb.Image(img, caption=f'{iteration}-RF Step {step + 1}')
+                        f'{label}/samples': wandb.Image(img, caption=f'{label} Step {step + 1}')
                     })
                 except Exception as e:
                     print(f"Warning: Failed to log samples to wandb: {e}")
 
         # Save checkpoint
         if (step + 1) % save_every == 0:
-            checkpoint_path = os.path.join(checkpoints_dir, f'{iteration}-RF_{step + 1:07d}.pt')
+            checkpoint_path = os.path.join(checkpoints_dir, f'{label}_{step + 1:07d}.pt')
             save_checkpoint(checkpoint_path, model, optimizer, ema, scaler, step + 1, source_config)
 
     # Save final checkpoint for this iteration
-    final_path = os.path.join(checkpoints_dir, f'{iteration}-RF_final.pt')
+    final_path = os.path.join(checkpoints_dir, f'{label}_final.pt')
     save_checkpoint(final_path, model, optimizer, ema, scaler, num_iterations, source_config)
 
-    print(f"\n{iteration}-RF training complete!")
+    print(f"\n{label} training complete!")
     return model, ema
 
 
@@ -471,6 +482,13 @@ def run_reflow(config: dict, checkpoint: str):
     # Apply EMA weights as starting point
     ema.apply_shadow()
     print("Applied EMA weights as starting point for ReFlow")
+
+    # Optionally compile model for faster training
+    compile_model = infra_config.get('compile_model', False)
+    if compile_model:
+        print("Compiling model with torch.compile()...")
+        model = torch.compile(model, mode='reduce-overhead', fullgraph=False)
+        print("Model compiled successfully")
 
     # Setup logging
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -577,46 +595,21 @@ def run_reflow(config: dict, checkpoint: str):
         ema.apply_shadow()
         print(f"Applied EMA weights from {iteration}-RF for next iteration")
 
-        # Free pair memory
-        del x_0_all, x_1_all
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        # Free pair memory, but preserve the last iteration's pairs for distillation
+        distill_config = config.get('distillation', {})
+        is_last_iter = (rf_iter == num_rf_iterations - 1)
+        if is_last_iter and distill_config.get('enabled', False):
+            last_x_0 = x_0_all
+            last_x_1 = x_1_all
+        else:
+            del x_0_all, x_1_all
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
-    # Optional distillation
+    # Optional distillation — reuses pairs from the final k-RF iteration
     distill_config = config.get('distillation', {})
     if distill_config.get('enabled', False):
-        print(f"\n{'=' * 60}")
-        print(f"Distillation: Generating pairs from final {iteration}-RF")
-        print(f"{'=' * 60}")
-
-        distill_datagen = distill_config.get('datagen', datagen_config)
-        distill_num_pairs = distill_datagen.get('num_pairs', num_pairs)
-        distill_batch_size = distill_datagen.get('batch_size', gen_batch_size)
-        distill_num_steps = distill_datagen.get('num_steps', gen_num_steps)
-        distill_solver_name = distill_datagen.get('solver', gen_solver_name)
-
-        cfm_config = source_config.get('cfm', {})
-        distill_gen_method = FlowMatching(
-            model=model,
-            device=device,
-            num_timesteps=cfm_config.get('num_timesteps', 100),
-            solver=get_solver(distill_solver_name),
-        )
-
-        x_0_all, x_1_all = generate_pairs(
-            method=distill_gen_method,
-            num_pairs=distill_num_pairs,
-            image_shape=image_shape,
-            device=device,
-            batch_size=distill_batch_size,
-            num_steps=distill_num_steps,
-        )
-
-        print(f"Generated {distill_num_pairs} distillation pairs")
-
-        # Build a training config for distillation, falling back to reflow training config
         distill_training = distill_config.get('training', config['training'])
-
         distill_full_config = {
             'training': distill_training,
             'sampling': config.get('sampling', {}),
@@ -627,15 +620,18 @@ def run_reflow(config: dict, checkpoint: str):
             model=model,
             source_config=source_config,
             reflow_config=distill_full_config,
-            x_0_all=x_0_all,
-            x_1_all=x_1_all,
-            iteration='distilled',
+            x_0_all=last_x_0,
+            x_1_all=last_x_1,
             log_dir=log_dir,
             device=device,
+            iteration=iteration,
+            distill=True,
             wandb_run=wandb_run,
         )
 
-        del x_0_all, x_1_all
+        del last_x_0, last_x_1
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     # Finish
     if wandb_run is not None:
