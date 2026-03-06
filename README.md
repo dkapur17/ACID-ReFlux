@@ -1,93 +1,204 @@
-# CMU 10799 Diffusion & Flow Matching Homework Starter Code
+# ACID ReFlux
 
-Welcome to CMU 10799 Spring 2026: Diffusion & Flow Matching!
+This repository implements several generative modeling methods on CelebA, culminating in **ACID ReFlux** — a novel fine-tuning approach that straightens flow trajectories using amortized noise coupling and endpoint consistency regularization.
 
-This repository contains your starter code for all four homework assignments. You'll build a working diffusion model from scratch, starting with DDPM fundamentals and progressing through flow matching to your chosen specialization track. The codebase is designed to grow with you, and what you implement in HW1 becomes the foundation for everything that follows.
+## Methods
 
-[Class Website](https://kellyyutonghe.github.io/10799S26/) | [Homework Handouts](https://kellyyutonghe.github.io/10799S26/homework/)
+### DDPM (`src/methods/ddpm.py`)
+
+Standard Denoising Diffusion Probabilistic Models (Ho et al. 2020). Implements:
+- Forward process: `q(x_t | x_0) = N(sqrt(alpha_bar_t) * x_0, (1 - alpha_bar_t) * I)`
+- Reverse process with both **DDPM** (stochastic) and **DDIM** (deterministic, Song et al. 2020) samplers
+- Supports `epsilon` and `x0` prediction targets
+- DDIM enables accelerated sampling with `num_steps << num_timesteps`
+
+### CFM — Continuous Flow Matching (`src/methods/cfm.py`)
+
+Implements continuous flow matching (1-Rectified Flow). The forward process interpolates linearly between noise and data:
+
+```
+x_t = (1 - t) * x_0 + t * x_1
+```
+
+The model learns to predict the velocity `v = x_1 - x_0` at each interpolated point, and Euler integration integrates the ODE from `t=0` to `t=1` at inference. Supports pluggable solvers (Euler, etc.).
+
+### ReFlow (`reflow.py`)
+
+Rectified Flow iterations (Liu et al. 2022). Starting from a pretrained CFM model (1-RF):
+
+1. **Generate coupled pairs**: run the current model's ODE from noise `x_0 ~ N(0, I)` to get endpoint `x_1`, creating (noise, image) pairs.
+2. **Fine-tune on pairs**: train a new model on these coupled pairs to straighten the flow trajectories.
+3. Repeat for `k` iterations to produce a k-RF model with increasingly straight trajectories.
+
+Also supports optional **1-step distillation**: after the final ReFlow iteration, train with `t` fixed to `0` so `v_theta(x_0, 0)` directly predicts `x_1 - x_0`, enabling single-step generation.
+
+---
+
+## ACID ReFlux (`reflux.py`)
+
+**ACID** = **A**mortized noise **C**oupling with endpoint cons**I**stency **D**irection
+
+ACID ReFlux is a fine-tuning algorithm that builds on a pretrained CFM model to produce straighter ODE trajectories, making the model more accurate with fewer function evaluations (NFEs). It replaces the O(N^3) Hungarian matching used in naive optimal transport coupling with a scalable, cache-based approach.
+
+### Core Idea
+
+Rather than solving an expensive matching problem, ACID ReFlux maintains a **per-sample noise cache**: for each training image, it stores the best noise vector found so far. At each step, it generates fresh noise candidates and competes them against the cached noise using the current model's ODE, keeping whichever achieves lower transport cost.
+
+### Algorithm
+
+Each training step proceeds as follows:
+
+**1. Load a batch of N images**
+
+Sample a batch of images `x_1` along with their dataset indices.
+
+**2. Oversample noise candidates**
+
+Generate `(oversample_factor - 1) * N` fresh noise vectors. Retrieve `N` cached noise vectors for the current batch indices. This gives `oversample_factor * N` total candidates.
+
+**3. Evaluate cost via forward ODE**
+
+Run the current model's ODE forward (`t=0 -> t=1`) on all candidates using `cost_num_steps` Euler steps. Compute the squared L2 distance between each transported noise and its candidate image:
+
+```
+cost(x_0, x_1) = ||ODE(x_0) - x_1||^2
+```
+
+**4. Select best noise per image**
+
+For each image, pick whichever candidate (fresh or cached) achieves the lowest cost. Update the cache with the chosen noise vector and cost.
+
+**5. Train on selected pairs**
+
+Use the selected (noise, image) pairs to compute:
+
+- **CFM loss** (random `t`, linear interpolation):
+  ```
+  L_cfm = ||v_theta(x_t, t) - (x_1 - x_0)||^2
+  ```
+
+- **EPC loss** (Endpoint Consistency, active after cache crystallization):
+  ```
+  L_epc0 = ||v_theta(x_0, 0) - (x_1 - x_0)||^2    # anchor at t=0
+  L_epc1 = ||v_theta(x_1, 1) - (x_1 - x_0)||^2    # anchor at t=1 (optional)
+  ```
+
+  ```
+  L_total = L_cfm + lambda_epc * (L_epc0 + L_epc1)
+  ```
+
+EPC enforces that the velocity field is consistent with the true displacement at the trajectory endpoints, which is critical for accurate few-step generation.
+
+### Cache Crystallization & Two-Phase Training
+
+Training proceeds in two phases, triggered automatically:
+
+**Coupling phase (full mode):**
+- Each step: run ODE on all `oversample_factor * N` candidates, select best, train with CFM loss only.
+- NFE/step = `oversample_factor * N * cost_num_steps` (coupling) + `N` (training)
+
+**Cache-only phase (after crystallization):**
+- Activated when the rolling average cache reuse rate exceeds `crystallization_threshold` (default 0.95) over `cache_patience` steps. This means the cache has stabilized — fresh noise rarely beats cached noise.
+- Skip ODE evaluation entirely; use cached noise directly.
+- Enable EPC losses (both `L_epc0` and optionally `L_epc1`).
+- NFE/step = `N * 2` or `N * 3` (training only, no coupling cost)
+- The saved NFE budget is redistributed into more training steps.
+
+### Noise Cache
+
+The `NoiseCache` class manages per-sample noise storage:
+- **Warm-started** with random noise for all dataset samples — every lookup is guaranteed to hit from step 1.
+- Stored in CPU RAM (~3 GB for 60K CelebA samples at 64x64).
+- Updated after each step with the newly selected noise and its cost.
+- Saved to disk periodically and loaded on resume.
+
+### NFE Budget
+
+ACID ReFlux operates under a fixed **NFE (Neural Function Evaluation) budget** rather than a fixed step count. This ensures fair comparison across different configurations (oversample factor, ODE steps, batch size). The budget is computed as:
+
+```
+budget = nfe_budget (default: 40M)
+max_steps = budget // nfe_per_step
+```
+
+When cache-only mode activates, the reduced per-step NFE cost is used to compute additional training steps from the remaining budget.
+
+### Training Metrics
+
+The training dashboard (`plots/dashboard.png`) tracks:
+- Loss breakdown: total, CFM, EPC (t=0 and t=1)
+- Mean coupling cost over time
+- Gradient norm
+- Cumulative NFE vs. budget
+- Trajectory straightness: cosine similarity and path-length ratio
+- Cache use rate (fraction of steps where cached noise beats fresh)
+
+### Usage
+
+```bash
+python reflux.py
+```
+
+Configuration is set directly in the `ReFluxConfig` dataclass at the top of `reflux.py`. Key parameters:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `checkpoint_path` | `checkpoints/cfm_final.pt` | Source CFM checkpoint |
+| `data_path` | `data/celeba-subset/train` | Training data |
+| `batch_size` | 128 | Images per step |
+| `noise_oversample` | 8 | Total candidates = `batch_size * noise_oversample` |
+| `cost_num_steps` | 2 | ODE steps for cost evaluation |
+| `cache_patience` | 50 | Rolling window for crystallization check |
+| `crystallization_threshold` | 0.95 | Cache reuse rate threshold for cache-only mode |
+| `lambda_epc` | 1.0 | Weight on EPC anchor losses |
+| `anchor_x_1` | False | Whether to include EPC at `t=1` |
+| `lr` | 1e-5 | Learning rate (lower than CFM training; this is fine-tuning) |
+| `nfe_budget` | 40M | Total NFE budget |
+
+Checkpoints are saved to `checkpoints/reflux/` every `save_interval` steps, and training resumes automatically if a checkpoint and cache are found.
+
+---
 
 ## Project Structure
 
 ```
-cmu-10799-diffusion/
-├── train.py                  # Training script
+acid-reflux/
+├── reflux.py                 # ACID ReFlux fine-tuning (main contribution)
+├── reflow.py                 # ReFlow iterations + distillation
+├── train.py                  # CFM/DDPM training script
 ├── sample.py                 # Sampling script
+├── eval_curvature.py         # Evaluate trajectory curvature
+├── visualize_trajectories.py # Visualize ODE trajectories from checkpoints
+├── compare.py                # Compare methods side-by-side
 ├── download_dataset.py       # Download CelebA dataset
 ├── modal_app.py              # Modal cloud setup
-├── setup.sh                  # Setup script (pip + venv)
-├── setup-uv.sh               # Setup script (uv - faster!)
-├── pyproject.toml            # Python package configuration
 │
-├── src/                      # Source code
+├── src/
 │   ├── models/
 │   │   ├── blocks.py         # U-Net components (ResBlock, Attention, etc.)
-│   │   └── unet.py           # Complete U-Net architecture
+│   │   └── unet.py           # U-Net architecture
 │   ├── methods/
 │   │   ├── base.py           # Base method class
-│   │   └── ddpm.py           # DDPM implementation
+│   │   ├── ddpm.py           # DDPM + DDIM
+│   │   ├── cfm.py            # Continuous Flow Matching
+│   │   ├── schedulers.py     # Noise schedules
+│   │   └── solvers.py        # ODE solvers (Euler, etc.)
 │   ├── data/
-│   │   └── celeba.py         # CelebA dataset loading, TODO: fill in your data transforms functions
+│   │   └── celeba.py         # CelebA dataset loading
 │   └── utils/
 │       ├── ema.py            # EMA helper
 │       └── logging_utils.py  # Logging utilities
 │
-├── configs/                  # Hyperparameter configurations
-│   ├── ddpm_modal.yaml       # DDPM config for Modal
-│   └── ddpm_babel.yaml       # DDPM config for Babel cluster
-│
-├── scripts/                  # Shell scripts for Modal/cluster
-│   ├── train.sh              # SLURM job template (tested on babel)
-│   ├── evaluate_torch_fidelity.sh        # torch-fidelity evaluation on cluster or locally (tested on babel)
-│   ├── evaluate_modal_torch_fidelity.sh  # torch-fidelity evaluation on Modal
-│   └── list_checkpoints.sh   # List Modal checkpoints
-│
-├── notebooks/                # Jupyter notebooks
-│   ├── 01_1d_playground.ipynb
-│   ├── 02_dataset_exploration.ipynb
-│   └── 03_sampling_visualization.ipynb
-│
-├── environments/             # Environment configurations
-│   ├── requirements.txt      # Base dependencies
-│   ├── requirements-cpu.txt  # CPU-only PyTorch
-│   ├── requirements-cuda*.txt  # PyTorch + CUDA versions
-│   └── requirements-rocm.txt # PyTorch + ROCm (AMD)
-│
-└── docs/                     # Documentation
-    ├── SETUP.md              # Platform-specific setup guide
-    ├── QUICKSTART-MODAL.md   # Quick start for Modal users
-    └── DIRECTORY-STRUCTURE.md # Directory structure guide
+└── configs/                  # YAML configs for training runs
 ```
-
-## List of TODOs
-
-1. src/data/celeba.py: fill in your data transforms functions
-2. src/methods/ddpm.py: implement everything in this file
-3. src/models/unet.py: implement the unet model architecture and its forward pass
-4. configs/: create your own model configs
-5. train.py: incorporate your sampling scheme to the training pipeline and save generated samples as images for logging
-6. sample.py: incorporate your sampling scheme to the training pipeline and save generated samples as images
-
-## Example scripts & Helper skeleton notebooks
-Besides the parts that you need to implement, the starter code also provides several example scripts & helper notebook skeleton to help you get started.
-
-The scripts are stored in scripts/ and the notebooks are stored in notebooks/. Feel free to use (or not use), add, delete or modify any and all parts of these scripts and notebooks.
 
 ## Quick Start
 
-### 1. Setup Environment
+### 1. Setup
 
 ```bash
-git clone <repo-url>
-cd cmu-10799-diffusion
-
-# Run setup script (auto-detects your GPU)
-./setup-uv.sh                 # Using uv (faster)
-# or
-./setup.sh                    # Using standard pip
-
-# Activate the environment (name depends on detected hardware)
-source .venv-cpu/bin/activate        # If CPU was detected
-source .venv-cuda121/bin/activate    # If CUDA 12.1 was detected
+./setup-uv.sh
+source .venv-cuda121/bin/activate
 ```
 
 ### 2. Download Dataset
@@ -96,170 +207,41 @@ source .venv-cuda121/bin/activate    # If CUDA 12.1 was detected
 python download_dataset.py
 ```
 
-### 3. Train (SLURM Cluster)
+### 3. Train CFM (prerequisite for ReFlux)
 
 ```bash
-# Train DDPM (uses configs/ddpm.yaml by default)
-sbatch scripts/train.sh ddpm
-
-# Train with custom config
-sbatch scripts/train.sh ddpm configs/ddpm_babel.yaml
-
-# Resume from checkpoint
-sbatch scripts/train.sh ddpm --resume checkpoints/ddpm_50000.pt
+python train.py --method cfm --config configs/cfm.yaml
 ```
 
-### 4. Train (Modal Cloud GPU)
+### 4. Run ACID ReFlux
 
-For students without a local GPU:
+Edit `ReFluxConfig` in `reflux.py` to set your checkpoint path, then:
 
 ```bash
-# First time: cache dataset to Modal volume
-modal run modal_app.py --action download
-
-# Train DDPM
-modal run modal_app.py --action train --method ddpm
+python reflux.py
 ```
 
-See [docs/QUICKSTART-MODAL.md](docs/QUICKSTART-MODAL.md) for complete Modal setup.
-
-### 5. Evaluate
+### 5. Run ReFlow (alternative trajectory straightening)
 
 ```bash
-# Evaluate using torch-fidelity (local/cluster)
-./scripts/evaluate_torch_fidelity.sh ddpm checkpoints/ddpm/ddpm_final.pt
-
-# Evaluate on Modal
-./scripts/evaluate_modal_torch_fidelity.sh ddpm checkpoints/ddpm/ddpm_final.pt
+python reflow.py --config configs/reflow/reflow.yaml --checkpoint checkpoints/cfm_final.pt
 ```
 
-### Jupyter Notebooks
+### 6. Evaluate
 
-- `01_1d_playground.ipynb` - 1D diffusion experiments for building intuition
-- `02_dataset_exploration.ipynb` - Explore CelebA dataset
-- `03_sampling_visualization.ipynb` - Visualize your samples
+```bash
+# Trajectory straightness / curvature
+python eval_curvature.py --checkpoint checkpoints/reflux/reflux_final.pt
+
+# Visual comparison
+python visualize_trajectories.py --checkpoint checkpoints/reflux/reflux_final.pt
+```
 
 ---
-
-## Manual Installation
-
-If the setup scripts don't work for your system, you can set up manually.
-
-### Option A: Manual setup with uv
-
-[uv](https://github.com/astral-sh/uv) is a fast Python package manager (10-100x faster than pip).
-
-```bash
-# 1. Install uv (one-time)
-curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS/Linux
-# or: pip install uv
-
-# 2. Clone and enter repo
-git clone <repo-url>
-cd cmu-10799-diffusion
-
-# 3. Create virtual environment
-uv venv .venv-cpu              # For CPU
-uv venv .venv-cuda121          # For CUDA 12.1
-
-# 4. Activate it
-source .venv-cpu/bin/activate        # CPU
-source .venv-cuda121/bin/activate    # GPU
-
-# 5. Install dependencies (choose one)
-uv pip install -r environments/requirements-cpu.txt      # No GPU / Modal users
-uv pip install -r environments/requirements-cuda121.txt  # NVIDIA GPU (most common)
-
-# 6. Verify
-python -c "import torch; print(f'PyTorch {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
-```
-
-### Option B: Manual setup with pip + venv
-
-Check your CUDA version: `nvidia-smi` (top right shows "CUDA Version: XX.X")
-
-```bash
-# 1. Clone and enter repo
-git clone <repo-url>
-cd cmu-10799-diffusion
-
-# 2. Create virtual environment
-python -m venv .venv-cpu        # For CPU
-python -m venv .venv-cuda121    # For CUDA 12.1
-
-# 3. Activate it
-source .venv-cpu/bin/activate        # CPU
-source .venv-cuda121/bin/activate    # GPU
-
-# 4. Install dependencies (choose one)
-pip install -r environments/requirements-cpu.txt      # No GPU / Modal users
-pip install -r environments/requirements-cuda121.txt  # NVIDIA GPU (most common)
-
-# 5. Verify
-python -c "import torch; print(f'PyTorch {torch.__version__}, CUDA: {torch.cuda.is_available()}')"
-```
-
-See [docs/SETUP.md](docs/SETUP.md) for detailed instructions for Modal, AWS, and SLURM clusters.
-
----
-
-## Running Customized Commands Manually
-
-If you prefer to run Python commands directly instead of using the provided scripts:
-
-### Training
-
-```bash
-python train.py --method ddpm --config configs/ddpm.yaml
-```
-
-### Generating Samples
-
-```bash
-python sample.py --checkpoint checkpoints/ddpm_final.pt --method ddpm --num_samples 64
-
-# With custom number of sampling steps
-python sample.py --checkpoint checkpoints/ddpm_final.pt --method ddpm --num_steps 500
-```
-
-### Evaluation
-
-Use the provided shell scripts that wrap `torch-fidelity`:
-
-```bash
-# Evaluate locally or on cluster
-./scripts/evaluate_torch_fidelity.sh ddpm checkpoints/ddpm_final.pt
-
-# Evaluate on Modal
-./scripts/evaluate_modal_torch_fidelity.sh ddpm checkpoints/ddpm_final.pt
-```
-
-### Modal (Advanced Options)
-
-```bash
-# Train with custom config
-modal run modal_app.py --action train --method ddpm --config configs/custom.yaml
-
-# Train with custom iterations
-modal run modal_app.py --action train --method ddpm --iterations 50000
-```
-
-To enable Weights & Biases logging on Modal:
-```bash
-modal secret create wandb-api-key WANDB_API_KEY=your_real_key
-```
-
-## Configuration
-
-All hyperparameters are controlled via config files. Edit `configs/ddpm*.yaml` to configurate your model.
-
----
-
-
-## Authors
-
-Yutong (Kelly) He, with assistance from Claude Code and OpenAI Codex.
 
 ## References
 
-- [DDIM official code](https://github.com/ermongroup/ddim/)
+- Ho et al. (2020). *Denoising Diffusion Probabilistic Models.* NeurIPS 2020.
+- Song et al. (2020). *Denoising Diffusion Implicit Models.* ICLR 2021.
+- Liu et al. (2022). *Flow Straight and Fast: Learning to Generate and Transfer Data with Rectified Flow.* ICLR 2023.
+- Lipman et al. (2022). *Flow Matching for Generative Modeling.* ICLR 2023.
