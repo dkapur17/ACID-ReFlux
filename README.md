@@ -116,7 +116,7 @@ The `NoiseCache` class manages per-sample noise storage:
 
 ### NFE Budget
 
-ACID ReFlux operates under a fixed **NFE (Neural Function Evaluation) budget** rather than a fixed step count. This ensures fair comparison across different configurations (oversample factor, ODE steps, batch size). The budget is computed as:
+ACID ReFlux operates under a fixed **NFE (Number of Function Evaluations) budget** rather than a fixed step count. This ensures fair comparison across different configurations (oversample factor, ODE steps, batch size). The budget is computed as:
 
 ```
 budget = nfe_budget (default: 40M)
