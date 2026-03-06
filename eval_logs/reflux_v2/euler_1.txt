@@ -1,0 +1,91 @@
+✓ Initialized. View run at https://modal.com/apps/dkapur/main/ap-n5Ule6QX9zXx1sAK2ILKVf
+✓ Created objects.
+├── 🔨 Created mount /Users/dhruvkapur/stuff/cmu/acads/s26/10799/cmu-10799-diffusion/modal_app.py
+├── 🔨 Created mount /Users/dhruvkapur/stuff/cmu/acads/s26/10799/cmu-10799-diffusion
+├── 🔨 Created function train_1gpu.
+├── 🔨 Created function train_2gpu.
+├── 🔨 Created function train_3gpu.
+├── 🔨 Created function train_4gpu.
+├── 🔨 Created function train_5gpu.
+├── 🔨 Created function train_6gpu.
+├── 🔨 Created function train_7gpu.
+├── 🔨 Created function train_8gpu.
+├── 🔨 Created function reflow_1gpu.
+├── 🔨 Created function sample.
+├── 🔨 Created function download_dataset.
+├── 🔨 Created function evaluate_torch_fidelity.
+├── 🔨 Created function evaluate_curvature.
+├── 🔨 Created function visualize_trajectories.
+└── 🔨 Created function delete_dir.
+Using cached dataset images at /data/celeba_images
+============================================================
+Step 1/2: Generating samples...
+============================================================
+Override flag set, regenerating samples...
+Using device: cuda
+Loading checkpoint from /data/checkpoints/reflux_v2.pt...
+Using EMA weights
+Generating 1000 samples...
+
+[1AGenerating samples:   0%|          | 0/1000 [00:00<?, ?it/s]
+
+[1A
+[1A  0%|          | 0/1 [00:00<?, ?it/s][A
+
+[1A100%|██████████| 1/1 [00:00<00:00,  1.43it/s][A
+[1A100%|██████████| 1/1 [00:00<00:00,  1.43it/s]
+
+[1AGenerating samples:  13%|█▎        | 128/1000 [00:01<00:07, 110.86it/s]
+
+[1A
+[1A  0%|          | 0/1 [00:00<?, ?it/s][A
+[1A100%|██████████| 1/1 [00:00<00:00, 70.01it/s]
+
+[1AGenerating samples:  26%|██▌       | 256/1000 [00:01<00:04, 172.13it/s]
+
+[1A
+[1A  0%|          | 0/1 [00:00<?, ?it/s][A
+[1A100%|██████████| 1/1 [00:00<00:00, 67.40it/s]
+
+[1AGenerating samples:  38%|███▊      | 384/1000 [00:02<00:03, 201.44it/s]
+
+[1A
+[1A  0%|          | 0/1 [00:00<?, ?it/s][A
+[1A100%|██████████| 1/1 [00:00<00:00, 72.89it/s]
+
+[1AGenerating samples:  51%|█████     | 512/1000 [00:02<00:02, 227.11it/s]
+
+[1A
+[1A  0%|          | 0/1 [00:00<?, ?it/s][A100%|██████████| 1/1 [00:00<00:00, 71.15it/s]
+
+[1AGenerating samples:  64%|██████▍   | 640/1000 [00:03<00:01, 219.36it/s]
+
+[1A
+[1A  0%|          | 0/1 [00:00<?, ?it/s][A
+[1A100%|██████████| 1/1 [00:00<00:00, 63.96it/s]
+
+[1AGenerating samples:  77%|███████▋  | 768/1000 [00:03<00:01, 231.71it/s]
+
+[1A
+[1A  0%|          | 0/1 [00:00<?, ?it/s][A100%|██████████| 1/1 [00:00<00:00, 71.79it/s]
+
+[1AGenerating samples:  90%|████████▉ | 896/1000 [00:04<00:00, 244.97it/s]
+
+[1A  0%|          | 0/1 [00:00<?, ?it/s][A
+[1A100%|██████████| 1/1 [00:00<00:00, 16.17it/s]
+
+[1AGenerating samples: 100%|██████████| 1000/1000 [00:04<00:00, 252.39it/s]Generating samples: 100%|██████████| 1000/1000 [00:04<00:00, 221.14it/s]
+Saved 1000 individual images to /data/checkpoints/samples/generated
+Generated 1000 samples to /data/checkpoints/samples/generated
+
+============================================================
+Step 2/2: Running torch-fidelity...
+============================================================
+
+Running command: fidelity --gpu 0 --batch-size 128 --cache-root /data/checkpoints/samples/cache --input1 /data/checkpoints/samples/generated --input2 /data/celeba_images --kid
+
+kernel_inception_distance_mean: 0.06513126
+kernel_inception_distance_std: 0.000993334
+
+Stopping app - local entrypoint completed.
+✓ App completed. View run at https://modal.com/apps/dkapur/main/ap-n5Ule6QX9zXx1sAK2ILKVf
