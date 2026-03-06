@@ -2,6 +2,8 @@
 
 This repository implements several generative modeling methods on CelebA, culminating in **ACID ReFlux** — a novel fine-tuning approach that straightens flow trajectories using amortized noise coupling and endpoint consistency regularization.
 
+![Sample comparison between methods.](assets/comparison.png)
+
 ## Methods
 
 ### DDPM (`src/methods/ddpm.py`)
